@@ -605,14 +605,7 @@ const signCsrfToken = (clientId: string, payload: CsrfTokenPayload): Buffer => {
 };
 
 /**
- * Generate a cryptographically secure CSRF token
- */
-export const generateCsrfToken = (): string => {
-  return crypto.randomBytes(CSRF_TOKEN_LENGTH).toString("hex");
-};
-
-/**
- * Create and store a new CSRF token for a client
+ * Create a new CSRF token for a client
  * Returns the token to be sent to the client
  */
 export const createCsrfToken = (clientId: string): string => {

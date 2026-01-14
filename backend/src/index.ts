@@ -381,13 +381,9 @@ const csrfProtectionMiddleware = (
   next: express.NextFunction
 ) => {
   // Skip CSRF validation for safe methods (GET, HEAD, OPTIONS)
+  // Note: /csrf-token is a GET endpoint, so it's automatically exempt
   const safeMethods = ["GET", "HEAD", "OPTIONS"];
   if (safeMethods.includes(req.method)) {
-    return next();
-  }
-
-  // Skip CSRF for the CSRF token endpoint itself
-  if (req.path === "/csrf-token") {
     return next();
   }
 
