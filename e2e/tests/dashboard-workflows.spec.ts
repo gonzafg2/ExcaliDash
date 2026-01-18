@@ -70,20 +70,21 @@ test.describe("Dashboard Workflows", () => {
     await page.waitForLoadState("networkidle");
     await applyDashboardSearch(page, drawingName);
 
-    const cardLocator = await ensureCardVisible(page, createdDrawing.id);
+    let cardLocator = await ensureCardVisible(page, createdDrawing.id);
 
     await ensureCardSelected(page, createdDrawing.id);
     await page.getByTitle("Move to Trash").click();
     await expect(cardLocator).toHaveCount(0);
 
     await page.getByRole("button", { name: /^Trash$/ }).click();
-    const trashCard = await ensureCardVisible(page, createdDrawing.id);
+    await applyDashboardSearch(page, drawingName);
+    cardLocator = await ensureCardVisible(page, createdDrawing.id);
 
     await ensureCardSelected(page, createdDrawing.id);
     await page.getByTitle("Delete Permanently").click();
     await page.getByRole("button", { name: /Delete \d+ Drawings/ }).click();
 
-    await expect(trashCard).toHaveCount(0);
+    await expect(cardLocator).toHaveCount(0);
 
     const response = await request.get(`${API_URL}/drawings/${createdDrawing.id}`);
     expect(response.status()).toBe(404);

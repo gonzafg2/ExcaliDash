@@ -1,16 +1,19 @@
 import { test, expect } from "./fixtures";
 
 test.describe("Authentication", () => {
+  test.use({ skipAuth: true });
+
   test("should require login and allow logout", async ({ page }) => {
     const username = process.env.AUTH_USERNAME || "admin";
-    const password = process.env.AUTH_PASSWORD || "admin";
+    const password = process.env.AUTH_PASSWORD || "admin123";
 
     await page.context().clearCookies();
     await page.goto("/");
 
-    await expect(page.getByText("Sign in to access your drawings")).toBeVisible();
+    const signInPrompt = page.getByText("Sign in to access your drawings");
+    await expect(signInPrompt).toBeVisible();
 
-    await page.getByLabel("Username").fill(username);
+    await page.getByLabel("Username or Email").fill(username);
     await page.getByLabel("Password").fill(password);
     await page.getByRole("button", { name: "Sign in" }).click();
 
@@ -22,6 +25,8 @@ test.describe("Authentication", () => {
     await expect(logoutButton).toBeVisible();
     await logoutButton.click();
 
-    await expect(page.getByText("Sign in to access your drawings")).toBeVisible();
+    await expect(signInPrompt).toBeVisible();
+
+    await page.context().clearCookies();
   });
 });

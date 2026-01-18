@@ -3,6 +3,7 @@ import {
   API_URL,
   createDrawing,
   deleteDrawing,
+  ensureAuthenticated,
   getCsrfHeaders,
   listDrawings,
   deleteCollection,
@@ -381,9 +382,9 @@ test.describe("Database Import Verification", () => {
   test("should verify SQLite import endpoint exists", async ({ request }) => {
     // Test that the verification endpoint responds
     // We don't actually import a database as that would affect the test environment
+    await ensureAuthenticated(request);
     const response = await request.post(`${API_URL}/import/sqlite/verify`, {
       headers: await getCsrfHeaders(request),
-      // Send empty form data to test endpoint exists
       multipart: {
         db: {
           name: "test.sqlite",

@@ -4,16 +4,15 @@ export type AuthSameSite = "lax" | "strict" | "none";
 
 export type AuthConfig = {
   enabled: boolean;
-  username: string;
-  password: string;
   sessionTtlMs: number;
   cookieName: string;
   cookieSameSite: AuthSameSite;
   secret: Buffer;
+  minPasswordLength: number;
 };
 
 export type AuthSession = {
-  username: string;
+  userId: string;
   iat: number;
   exp: number;
 };
@@ -46,6 +45,14 @@ const parseSessionTtlHours = (rawValue?: string): number => {
   return parsed;
 };
 
+const parseMinPasswordLength = (rawValue?: string): number => {
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 7;
+  }
+  return Math.floor(parsed);
+};
+
 const parseSameSite = (rawValue?: string): AuthSameSite => {
   if (!rawValue) return DEFAULT_COOKIE_SAMESITE;
   const normalized = rawValue.trim().toLowerCase();
@@ -73,50 +80,83 @@ const resolveAuthSecret = (enabled: boolean, env: NodeJS.ProcessEnv): Buffer => 
 };
 
 export const buildAuthConfig = (env: NodeJS.ProcessEnv = process.env): AuthConfig => {
-  const username = (env.AUTH_USERNAME || "").trim();
-  const password = env.AUTH_PASSWORD || "";
-  const enabled = username.length > 0 && password.length > 0;
   const sessionTtlHours = parseSessionTtlHours(env.AUTH_SESSION_TTL_HOURS);
   const cookieName = (env.AUTH_COOKIE_NAME || DEFAULT_COOKIE_NAME).trim();
   const cookieSameSite = parseSameSite(env.AUTH_COOKIE_SAMESITE);
+  const minPasswordLength = parseMinPasswordLength(env.AUTH_MIN_PASSWORD_LENGTH);
 
   return {
-    enabled,
-    username,
-    password,
+    enabled: true,
     sessionTtlMs: sessionTtlHours * 60 * 60 * 1000,
     cookieName: cookieName.length > 0 ? cookieName : DEFAULT_COOKIE_NAME,
     cookieSameSite,
-    secret: resolveAuthSecret(enabled, env),
+    secret: resolveAuthSecret(true, env),
+    minPasswordLength,
   };
 };
 
 const signToken = (secret: Buffer, payloadB64: string): Buffer =>
   crypto.createHmac("sha256", secret).update(payloadB64, "utf8").digest();
 
-const safeCompare = (left: string, right: string): boolean => {
-  const leftHash = crypto.createHash("sha256").update(left, "utf8").digest();
-  const rightHash = crypto.createHash("sha256").update(right, "utf8").digest();
-  return crypto.timingSafeEqual(leftHash, rightHash);
+const PASSWORD_SALT_BYTES = 16;
+const PASSWORD_HASH_BYTES = 64;
+const PASSWORD_SCRYPT_OPTIONS = {
+  N: 16384,
+  r: 8,
+  p: 1,
+  maxmem: 64 * 1024 * 1024,
 };
 
-export const verifyCredentials = (
-  config: AuthConfig,
-  inputUsername: string,
-  inputPassword: string
-): boolean => {
-  if (!config.enabled) return false;
-  return safeCompare(config.username, inputUsername) && safeCompare(config.password, inputPassword);
+export const hashPassword = (password: string): string => {
+  const salt = crypto.randomBytes(PASSWORD_SALT_BYTES);
+  const derived = crypto.scryptSync(password, salt, PASSWORD_HASH_BYTES, PASSWORD_SCRYPT_OPTIONS);
+  return `${salt.toString("hex")}:${derived.toString("hex")}`;
 };
 
-export const createAuthSessionToken = (config: AuthConfig, username: string): string => {
+export const verifyPassword = (password: string, storedHash: string): boolean => {
+  const [saltHex, derivedHex] = storedHash.split(":");
+  if (!saltHex || !derivedHex) return false;
+  const salt = Buffer.from(saltHex, "hex");
+  const derived = crypto.scryptSync(password, salt, PASSWORD_HASH_BYTES, PASSWORD_SCRYPT_OPTIONS);
+  const expected = Buffer.from(derivedHex, "hex");
+  if (expected.length !== derived.length) return false;
+  return crypto.timingSafeEqual(expected, derived);
+};
+
+export const isPasswordValid = (config: AuthConfig, password: string): boolean => {
+  if (typeof password !== "string") return false;
+  return password.trim().length >= config.minPasswordLength;
+};
+
+export const isEmailValid = (value: string | null | undefined): boolean => {
+  if (!value) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+};
+
+export const isUsernameValid = (value: string | null | undefined): boolean => {
+  if (!value) return false;
+  return /^[a-zA-Z0-9._-]+$/.test(value.trim());
+};
+
+export const generateRandomPassword = (length: number = 32): string => {
+  const chars =
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+[]{}|;:,.<>?";
+  const bytes = crypto.randomBytes(length);
+  let result = "";
+  for (let i = 0; i < length; i += 1) {
+    result += chars[bytes[i] % chars.length];
+  }
+  return result;
+};
+
+export const createAuthSessionToken = (config: AuthConfig, userId: string): string => {
   if (!config.enabled) {
     throw new Error("Authentication is not enabled.");
   }
 
   const issuedAt = Date.now();
   const payload: AuthSession = {
-    username,
+    userId,
     iat: issuedAt,
     exp: issuedAt + config.sessionTtlMs,
   };
@@ -151,7 +191,7 @@ export const validateAuthSessionToken = (
     const payloadJson = base64UrlDecode(payloadB64).toString("utf8");
     const payload = JSON.parse(payloadJson) as Partial<AuthSession>;
     if (
-      typeof payload.username !== "string" ||
+      typeof payload.userId !== "string" ||
       typeof payload.iat !== "number" ||
       typeof payload.exp !== "number"
     ) {
@@ -189,6 +229,9 @@ export const getAuthSessionFromCookie = (
   const token = cookies[config.cookieName];
   return validateAuthSessionToken(config, token);
 };
+
+export const buildAuthIdentifier = (user: { username?: string | null; email?: string | null }) =>
+  user.username || user.email || "";
 
 export const buildAuthCookieOptions = (
   secure: boolean,

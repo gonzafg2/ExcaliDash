@@ -3,7 +3,7 @@ import { Layout } from '../components/Layout';
 import { useNavigate } from 'react-router-dom';
 import * as api from '../api';
 import type { Collection } from '../types';
-import { Database, FileJson, Upload, Moon, Sun, Info, HardDrive, LogOut } from 'lucide-react';
+import { Database, FileJson, Upload, Moon, Sun, Info, HardDrive, LogOut, UserCog } from 'lucide-react';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { importDrawings } from '../utils/importUtils';
 import { useTheme } from '../context/ThemeContext';
@@ -13,7 +13,11 @@ export const Settings: React.FC = () => {
     const [collections, setCollections] = useState<Collection[]>([]);
     const navigate = useNavigate();
     const { theme, toggleTheme } = useTheme();
-    const { state: authState, logout, refreshStatus } = useAuth();
+    const { state: authState, logout, refreshStatus, setRegistrationEnabled, updateUserRole } = useAuth();
+
+    const [adminIdentifier, setAdminIdentifier] = useState('');
+    const [isAdminSubmitting, setIsAdminSubmitting] = useState(false);
+    const [adminError, setAdminError] = useState<string | null>(null);
 
     const [importConfirmation, setImportConfirmation] = useState<{ isOpen: boolean; file: File | null }>({ isOpen: false, file: null });
     const [importError, setImportError] = useState<{ isOpen: boolean; message: string }>({ isOpen: false, message: '' });
@@ -116,6 +120,111 @@ export const Settings: React.FC = () => {
                             </p>
                         </div>
                     </button>
+                )}
+
+                {authState.authenticated && authState.user?.role === 'ADMIN' && (
+                    <div className="flex flex-col items-center justify-center gap-4 p-8 bg-white dark:bg-neutral-900 border-2 border-black dark:border-neutral-700 rounded-2xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)]">
+                        <div className="w-16 h-16 bg-purple-50 dark:bg-neutral-800 rounded-2xl flex items-center justify-center border-2 border-purple-100 dark:border-neutral-700">
+                            <UserCog size={32} className="text-purple-600 dark:text-purple-400" />
+                        </div>
+                        <div className="text-center">
+                            <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-1">
+                                User Registration
+                            </h3>
+                            <p className="text-sm text-slate-500 dark:text-neutral-400 font-medium">
+                                {authState.registrationEnabled ? 'Registration is enabled' : 'Registration is disabled'}
+                            </p>
+                        </div>
+                        <button
+                            onClick={async () => {
+                                try {
+                                    await setRegistrationEnabled(!authState.registrationEnabled);
+                                } catch (err) {
+                                    console.error('Failed to toggle registration:', err);
+                                }
+                            }}
+                            className="w-full rounded-xl border-2 border-black dark:border-neutral-700 px-4 py-2 text-sm font-bold text-slate-900 dark:text-white bg-white dark:bg-neutral-800 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] dark:shadow-[3px_3px_0px_0px_rgba(255,255,255,0.2)]"
+                        >
+                            {authState.registrationEnabled ? 'Disable registration' : 'Enable registration'}
+                        </button>
+                    </div>
+                )}
+
+                {authState.authenticated && authState.user?.role === 'ADMIN' && (
+                    <div className="flex flex-col items-center justify-center gap-4 p-8 bg-white dark:bg-neutral-900 border-2 border-black dark:border-neutral-700 rounded-2xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)]">
+                        <div className="text-center">
+                            <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-1">
+                                Admin Access
+                            </h3>
+                            <p className="text-sm text-slate-500 dark:text-neutral-400 font-medium">
+                                Promote or demote users by username/email
+                            </p>
+                        </div>
+                        <input
+                            type="text"
+                            value={adminIdentifier}
+                            onChange={(event) => setAdminIdentifier(event.target.value)}
+                            placeholder="username or email"
+                            className="w-full rounded-xl border-2 border-black dark:border-neutral-700 bg-white dark:bg-neutral-800 px-4 py-3 text-sm text-slate-900 dark:text-white shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] dark:shadow-[3px_3px_0px_0px_rgba(255,255,255,0.2)]"
+                        />
+                        <div className="flex w-full gap-3">
+                            <button
+                                type="button"
+                                disabled={isAdminSubmitting}
+                                onClick={async () => {
+                                    const identifier = adminIdentifier.trim();
+                                    if (!identifier) {
+                                        setAdminError('Enter a username or email.');
+                                        return;
+                                    }
+                                    setAdminError(null);
+                                    setIsAdminSubmitting(true);
+                                    try {
+                                        await updateUserRole(identifier, 'ADMIN');
+                                        setAdminIdentifier('');
+                                    } catch (err) {
+                                        console.error('Failed to promote user:', err);
+                                        setAdminError('Unable to update user role.');
+                                    } finally {
+                                        setIsAdminSubmitting(false);
+                                    }
+                                }}
+                                className="flex-1 rounded-xl border-2 border-black dark:border-neutral-700 bg-indigo-600 text-white px-4 py-2 text-sm font-bold shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] dark:shadow-[3px_3px_0px_0px_rgba(255,255,255,0.2)]"
+                            >
+                                Make admin
+                            </button>
+                            <button
+                                type="button"
+                                disabled={isAdminSubmitting}
+                                onClick={async () => {
+                                    const identifier = adminIdentifier.trim();
+                                    if (!identifier) {
+                                        setAdminError('Enter a username or email.');
+                                        return;
+                                    }
+                                    setAdminError(null);
+                                    setIsAdminSubmitting(true);
+                                    try {
+                                        await updateUserRole(identifier, 'USER');
+                                        setAdminIdentifier('');
+                                    } catch (err) {
+                                        console.error('Failed to update user:', err);
+                                        setAdminError('Unable to update user role.');
+                                    } finally {
+                                        setIsAdminSubmitting(false);
+                                    }
+                                }}
+                                className="flex-1 rounded-xl border-2 border-black dark:border-neutral-700 bg-slate-100 dark:bg-neutral-800 text-slate-900 dark:text-white px-4 py-2 text-sm font-bold shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] dark:shadow-[3px_3px_0px_0px_rgba(255,255,255,0.2)]"
+                            >
+                                Remove admin
+                            </button>
+                        </div>
+                        {adminError && (
+                            <p className="text-sm text-rose-600 dark:text-rose-400 font-semibold">
+                                {adminError}
+                            </p>
+                        )}
+                    </div>
                 )}
 
                 <button

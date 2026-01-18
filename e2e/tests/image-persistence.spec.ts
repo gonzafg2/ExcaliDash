@@ -5,6 +5,7 @@ import {
   API_URL,
   createDrawing,
   deleteDrawing,
+  ensureAuthenticated,
   getCsrfHeaders,
   getDrawing,
 } from "./helpers/api";
@@ -199,6 +200,7 @@ test.describe("Security - Malicious Content Blocking", () => {
       },
     };
 
+    await ensureAuthenticated(request);
     const response = await request.post(`${API_URL}/drawings`, {
       headers: {
         "Content-Type": "application/json",
@@ -225,6 +227,7 @@ test.describe("Security - Malicious Content Blocking", () => {
     expect(savedFiles["malicious-image"].dataURL).not.toContain("javascript:");
 
     // Cleanup
+    await ensureAuthenticated(request);
     await request.delete(`${API_URL}/drawings/${drawing.id}`, {
       headers: await getCsrfHeaders(request),
     });
@@ -240,6 +243,7 @@ test.describe("Security - Malicious Content Blocking", () => {
       },
     };
 
+    await ensureAuthenticated(request);
     const response = await request.post(`${API_URL}/drawings`, {
       headers: {
         "Content-Type": "application/json",
@@ -266,6 +270,7 @@ test.describe("Security - Malicious Content Blocking", () => {
     expect(savedFiles["malicious-image"].dataURL).not.toContain("<script>");
 
     // Cleanup
+    await ensureAuthenticated(request);
     await request.delete(`${API_URL}/drawings/${drawing.id}`, {
       headers: await getCsrfHeaders(request),
     });

@@ -26,9 +26,15 @@ import {
 import {
   buildAuthConfig,
   buildAuthCookieOptions,
+  buildAuthIdentifier,
   createAuthSessionToken,
+  generateRandomPassword,
   getAuthSessionFromCookie,
-  verifyCredentials,
+  hashPassword,
+  isEmailValid,
+  isPasswordValid,
+  isUsernameValid,
+  verifyPassword,
 } from "./auth";
 
 dotenv.config();
@@ -48,19 +54,16 @@ const resolveDatabaseUrl = (rawUrl?: string) => {
 
   // Prisma treats relative SQLite paths as relative to the schema directory
   // (i.e. `backend/prisma/schema.prisma`). Historically this project used
-  // `file:./prisma/dev.db`, which Prisma interprets as `prisma/prisma/dev.db`.
-  // To keep runtime and migrations aligned:
-  // - Prefer resolving relative paths against `backend/prisma`
-  // - But if the path already includes a leading `prisma/`, resolve from repo root
+  // `file:./dev.db`, which Prisma interprets as `backend/prisma/dev.db`.
+  // To keep runtime and migrations aligned, resolve relative paths against
+  // `backend/prisma` and strip any leading `prisma/` prefix.
   const prismaDir = path.resolve(backendRoot, "prisma");
   const normalizedRelative = filePath.replace(/^\.\/?/, "");
-  const hasLeadingPrismaDir =
-    normalizedRelative === "prisma" ||
-    normalizedRelative.startsWith("prisma/");
+  const sanitizedRelative = normalizedRelative.replace(/^prisma\/?/, "");
 
   const absolutePath = path.isAbsolute(filePath)
     ? filePath
-    : path.resolve(hasLeadingPrismaDir ? backendRoot : prismaDir, normalizedRelative);
+    : path.resolve(prismaDir, sanitizedRelative);
 
   return `file:${absolutePath}`;
 };
@@ -104,11 +107,7 @@ const allowedOrigins = normalizeOrigins(process.env.FRONTEND_URL);
 console.log("Allowed origins:", allowedOrigins);
 
 const authConfig = buildAuthConfig();
-if (authConfig.enabled) {
-  console.log(`[auth] Enabled for user "${authConfig.username}".`);
-} else {
-  console.log("[auth] Disabled (AUTH_USERNAME/AUTH_PASSWORD not set).");
-}
+console.log("[auth] Auth middleware enabled.");
 
 const uploadDir = path.resolve(__dirname, "../uploads");
 
@@ -152,6 +151,89 @@ const io = new Server(httpServer, {
   maxHttpBufferSize: 1e8,
 });
 const prisma = new PrismaClient();
+
+const DEFAULT_SYSTEM_CONFIG_ID = "default";
+const DEFAULT_ADMIN_USERNAME = "admin";
+
+type AuthenticatedUser = {
+  id: string;
+  username: string | null;
+  email: string | null;
+  role: string;
+};
+
+const toAuthUser = (user: AuthenticatedUser) => ({
+  id: user.id,
+  username: user.username,
+  email: user.email,
+  role: user.role,
+});
+
+const ensureSystemConfig = async () => {
+  await prisma.systemConfig.upsert({
+    where: { id: DEFAULT_SYSTEM_CONFIG_ID },
+    update: {},
+    create: { id: DEFAULT_SYSTEM_CONFIG_ID, registrationEnabled: false },
+  });
+};
+
+const getSystemConfig = async () =>
+  prisma.systemConfig.findUnique({ where: { id: DEFAULT_SYSTEM_CONFIG_ID } });
+
+const resolveInitialAdminUser = () => {
+  const rawUsername = (process.env.AUTH_USERNAME || "").trim();
+  const rawEmail = (process.env.AUTH_EMAIL || "").trim();
+  const username = rawUsername.length > 0 ? rawUsername : DEFAULT_ADMIN_USERNAME;
+  const email = rawEmail.length > 0 ? rawEmail : null;
+  let password = process.env.AUTH_PASSWORD || "";
+  let generatedPassword = false;
+
+  if (!password || password.trim().length < authConfig.minPasswordLength) {
+    password = generateRandomPassword(32);
+    generatedPassword = true;
+  }
+
+  return {
+    username,
+    email,
+    password,
+    generatedPassword,
+  };
+};
+
+const ensureInitialAdminUser = async () => {
+  const existingUsers = await prisma.user.count();
+  if (existingUsers > 0) return;
+
+  const resolved = resolveInitialAdminUser();
+  if (resolved.username && !isUsernameValid(resolved.username)) {
+    throw new Error("Invalid AUTH_USERNAME value.");
+  }
+  if (resolved.email && !isEmailValid(resolved.email)) {
+    throw new Error("Invalid AUTH_EMAIL value.");
+  }
+
+  const passwordHash = hashPassword(resolved.password);
+
+  const created = await prisma.user.create({
+    data: {
+      username: resolved.username,
+      email: resolved.email,
+      passwordHash,
+      role: "ADMIN",
+    },
+  });
+
+  const identifier = buildAuthIdentifier(created) || "admin";
+  if (resolved.generatedPassword) {
+    console.warn(
+      `[auth] Generated admin password for ${identifier}: ${resolved.password}`
+    );
+  } else {
+    console.log(`[auth] Initial admin user "${identifier}" created from env.`);
+  }
+};
+
 const parseJsonField = <T>(
   rawValue: string | null | undefined,
   fallback: T
@@ -403,35 +485,85 @@ const authExemptPaths = new Set([
   "/auth/status",
   "/auth/login",
   "/auth/logout",
+  "/auth/register",
+  "/auth/bootstrap",
+  "/auth/registration/toggle",
+  "/auth/admins",
 ]);
 
-const authMiddleware = (
+const authNeedsSession = new Set([
+  "/auth/logout",
+  "/auth/registration/toggle",
+  "/auth/admins",
+]);
+
+const fetchSessionUser = async (
+  session: ReturnType<typeof getAuthSessionFromCookie>
+): Promise<AuthenticatedUser | null> => {
+  if (!session) return null;
+  return prisma.user.findUnique({
+    where: { id: session.userId },
+    select: { id: true, username: true, email: true, role: true },
+  });
+};
+
+const authMiddleware = async (
   req: express.Request,
   res: express.Response,
   next: express.NextFunction
 ) => {
-  if (!authConfig.enabled) {
-    return next();
-  }
+  try {
+    if (!authConfig.enabled) {
+      return next();
+    }
 
-  if (req.method === "OPTIONS") {
-    return next();
-  }
+    if (req.method === "OPTIONS") {
+      return next();
+    }
 
-  if (authExemptPaths.has(req.path)) {
-    return next();
-  }
+    const session = getAuthSessionFromCookie(req.headers.cookie, authConfig);
+    const sessionUser = await fetchSessionUser(session);
 
-  const session = getAuthSessionFromCookie(req.headers.cookie, authConfig);
-  if (!session) {
-    return res.status(401).json({
-      error: "Unauthorized",
-      message: "Authentication required",
-    });
-  }
+    if (authExemptPaths.has(req.path)) {
+      if (session && !sessionUser) {
+        res.clearCookie(
+          authConfig.cookieName,
+          buildAuthCookieOptions(isRequestSecure(req), authConfig.cookieSameSite)
+        );
+      }
 
-  res.locals.authUser = session.username;
-  next();
+      if (authNeedsSession.has(req.path) && !sessionUser) {
+        return res.status(401).json({
+          error: "Unauthorized",
+          message: "Authentication required",
+        });
+      }
+
+      if (sessionUser) {
+        res.locals.authUserId = sessionUser.id;
+      }
+
+      return next();
+    }
+
+    if (!sessionUser) {
+      if (session) {
+        res.clearCookie(
+          authConfig.cookieName,
+          buildAuthCookieOptions(isRequestSecure(req), authConfig.cookieSameSite)
+        );
+      }
+      return res.status(401).json({
+        error: "Unauthorized",
+        message: "Authentication required",
+      });
+    }
+
+    res.locals.authUserId = sessionUser.id;
+    next();
+  } catch (error) {
+    next(error);
+  }
 };
 
 // CSRF validation middleware for state-changing requests
@@ -507,41 +639,70 @@ const authLoginSchema = z.object({
   password: z.string().min(1).max(512),
 });
 
-app.get("/auth/status", (req, res) => {
+const authRegisterSchema = z.object({
+  username: z.string().trim().min(1).max(200).optional(),
+  email: z.string().trim().email().max(200).optional(),
+  password: z.string().min(1).max(512),
+});
+
+const adminUpdateSchema = z.object({
+  identifier: z.string().trim().min(1).max(200),
+  role: z.enum(["ADMIN", "USER"]),
+});
+
+app.get("/auth/status", async (req, res) => {
   const session = getAuthSessionFromCookie(req.headers.cookie, authConfig);
+  const config = await getSystemConfig();
+  const totalUsers = await prisma.user.count();
+  const user = await fetchSessionUser(session);
+
+  if (session && !user) {
+    res.clearCookie(
+      authConfig.cookieName,
+      buildAuthCookieOptions(isRequestSecure(req), authConfig.cookieSameSite)
+    );
+  }
+
   res.setHeader("Cache-Control", "no-store");
   res.json({
     enabled: authConfig.enabled,
-    authenticated: Boolean(session),
-    user: session ? { username: session.username } : null,
+    authenticated: Boolean(user),
+    registrationEnabled: Boolean(config?.registrationEnabled),
+    bootstrapRequired: totalUsers === 0,
+    user: user ? toAuthUser(user) : null,
   });
 });
 
-app.post("/auth/login", (req, res) => {
-  if (!authConfig.enabled) {
-    return res.status(404).json({
-      error: "Authentication disabled",
-      message: "Authentication is not enabled on this server.",
-    });
-  }
-
+app.post("/auth/login", async (req, res) => {
   const parsed = authLoginSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({
       error: "Invalid payload",
-      message: "Username and password are required.",
+      message: "Username or email and password are required.",
     });
   }
 
   const { username, password } = parsed.data;
-  if (!verifyCredentials(authConfig, username, password)) {
+  const identifier = username.trim().toLowerCase();
+
+  const user = await prisma.user.findFirst({
+    where: {
+      OR: [
+        { username: identifier },
+        { username: username.trim() },
+        { email: identifier },
+      ],
+    },
+  });
+
+  if (!user || !verifyPassword(password, user.passwordHash)) {
     return res.status(401).json({
       error: "Unauthorized",
-      message: "Invalid username or password.",
+      message: "Invalid username/email or password.",
     });
   }
 
-  const token = createAuthSessionToken(authConfig, authConfig.username);
+  const token = createAuthSessionToken(authConfig, user.id);
   res.cookie(
     authConfig.cookieName,
     token,
@@ -554,7 +715,7 @@ app.post("/auth/login", (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   return res.json({
     authenticated: true,
-    user: { username: authConfig.username },
+    user: toAuthUser(user),
   });
 });
 
@@ -565,6 +726,292 @@ app.post("/auth/logout", (req, res) => {
   );
   res.setHeader("Cache-Control", "no-store");
   return res.json({ authenticated: false });
+});
+
+app.post("/auth/register", async (req, res) => {
+  const config = await getSystemConfig();
+  const existingUsers = await prisma.user.count();
+
+  if (existingUsers === 0) {
+    return res.status(409).json({
+      error: "Bootstrap required",
+      message: "Create the first admin user before registering others.",
+    });
+  }
+
+  if (!config?.registrationEnabled) {
+    return res.status(403).json({
+      error: "Registration disabled",
+      message: "User registration is disabled.",
+    });
+  }
+
+  const parsed = authRegisterSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: "Invalid payload",
+      message: "Username or email plus password are required.",
+    });
+  }
+
+  const { username, email, password } = parsed.data;
+  const normalizedUsername = username?.trim() || null;
+  const normalizedEmail = email?.trim().toLowerCase() || null;
+
+  if (!normalizedUsername && !normalizedEmail) {
+    return res.status(400).json({
+      error: "Missing identifier",
+      message: "Provide at least a username or email address.",
+    });
+  }
+
+  if (normalizedUsername && !isUsernameValid(normalizedUsername)) {
+    return res.status(400).json({
+      error: "Invalid username",
+      message: "Username may contain letters, numbers, dots, underscores, and dashes.",
+    });
+  }
+
+  if (normalizedEmail && !isEmailValid(normalizedEmail)) {
+    return res.status(400).json({
+      error: "Invalid email",
+      message: "Please provide a valid email address.",
+    });
+  }
+
+  if (!isPasswordValid(authConfig, password)) {
+    return res.status(400).json({
+      error: "Weak password",
+      message: `Password must be at least ${authConfig.minPasswordLength} characters.`,
+    });
+  }
+
+  if (normalizedUsername) {
+    const existingUsername = await prisma.user.findUnique({
+      where: { username: normalizedUsername },
+    });
+    if (existingUsername) {
+      return res.status(409).json({
+        error: "Username taken",
+        message: "That username is already in use.",
+      });
+    }
+  }
+
+  if (normalizedEmail) {
+    const existingEmail = await prisma.user.findUnique({
+      where: { email: normalizedEmail },
+    });
+    if (existingEmail) {
+      return res.status(409).json({
+        error: "Email taken",
+        message: "That email is already in use.",
+      });
+    }
+  }
+
+  const user = await prisma.user.create({
+    data: {
+      username: normalizedUsername,
+      email: normalizedEmail,
+      passwordHash: hashPassword(password),
+      role: "USER",
+    },
+  });
+
+  return res.status(201).json({
+    user: toAuthUser(user),
+  });
+});
+
+app.post("/auth/bootstrap", async (req, res) => {
+  try {
+    const existingUsers = await prisma.user.count();
+    if (existingUsers > 0) {
+      return res.status(409).json({
+        error: "Already initialized",
+        message: "Users already exist.",
+      });
+    }
+
+    const parsed = authRegisterSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid payload",
+        message: "Username or email plus password are required.",
+      });
+    }
+
+    const { username, email, password } = parsed.data;
+    const normalizedUsername = username?.trim() || DEFAULT_ADMIN_USERNAME;
+    const normalizedEmail = email?.trim().toLowerCase() || null;
+
+    if (normalizedUsername && !isUsernameValid(normalizedUsername)) {
+      return res.status(400).json({
+        error: "Invalid username",
+        message: "Username may contain letters, numbers, dots, underscores, and dashes.",
+      });
+    }
+
+    if (normalizedEmail && !isEmailValid(normalizedEmail)) {
+      return res.status(400).json({
+        error: "Invalid email",
+        message: "Please provide a valid email address.",
+      });
+    }
+
+    if (!isPasswordValid(authConfig, password)) {
+      return res.status(400).json({
+        error: "Weak password",
+        message: `Password must be at least ${authConfig.minPasswordLength} characters.`,
+      });
+    }
+
+    if (normalizedUsername) {
+      const existingUsername = await prisma.user.findUnique({
+        where: { username: normalizedUsername },
+      });
+      if (existingUsername) {
+        return res.status(409).json({
+          error: "Username taken",
+          message: "That username is already in use.",
+        });
+      }
+    }
+
+    if (normalizedEmail) {
+      const existingEmail = await prisma.user.findUnique({
+        where: { email: normalizedEmail },
+      });
+      if (existingEmail) {
+        return res.status(409).json({
+          error: "Email taken",
+          message: "That email is already in use.",
+        });
+      }
+    }
+
+    const user = await prisma.user.create({
+      data: {
+        username: normalizedUsername,
+        email: normalizedEmail,
+        passwordHash: hashPassword(password),
+        role: "ADMIN",
+      },
+    });
+
+    const token = createAuthSessionToken(authConfig, user.id);
+    res.cookie(
+      authConfig.cookieName,
+      token,
+      buildAuthCookieOptions(
+        isRequestSecure(req),
+        authConfig.cookieSameSite,
+        authConfig.sessionTtlMs
+      )
+    );
+
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(201).json({
+      authenticated: true,
+      user: toAuthUser(user),
+    });
+  } catch (error) {
+    console.error("Bootstrap failed:", error);
+    return res.status(500).json({
+      error: "Bootstrap failed",
+      message: "Unable to bootstrap admin user.",
+    });
+  }
+});
+
+app.post("/auth/registration/toggle", async (req, res) => {
+  const session = getAuthSessionFromCookie(req.headers.cookie, authConfig);
+  if (!session) {
+    return res.status(401).json({
+      error: "Unauthorized",
+      message: "Authentication required",
+    });
+  }
+
+  const currentUser = await prisma.user.findUnique({
+    where: { id: session.userId },
+  });
+
+  if (!currentUser || currentUser.role !== "ADMIN") {
+    return res.status(403).json({
+      error: "Forbidden",
+      message: "Admin privileges required.",
+    });
+  }
+
+  const toggleSchema = z.object({ enabled: z.boolean() });
+  const parsed = toggleSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: "Invalid payload",
+      message: "Expected { enabled: boolean }.",
+    });
+  }
+
+  const updated = await prisma.systemConfig.upsert({
+    where: { id: DEFAULT_SYSTEM_CONFIG_ID },
+    update: { registrationEnabled: parsed.data.enabled },
+    create: { id: DEFAULT_SYSTEM_CONFIG_ID, registrationEnabled: parsed.data.enabled },
+  });
+
+  return res.json({ registrationEnabled: updated.registrationEnabled });
+});
+
+app.post("/auth/admins", async (req, res) => {
+  const session = getAuthSessionFromCookie(req.headers.cookie, authConfig);
+  if (!session) {
+    return res.status(401).json({
+      error: "Unauthorized",
+      message: "Authentication required",
+    });
+  }
+
+  const currentUser = await prisma.user.findUnique({
+    where: { id: session.userId },
+  });
+
+  if (!currentUser || currentUser.role !== "ADMIN") {
+    return res.status(403).json({
+      error: "Forbidden",
+      message: "Admin privileges required.",
+    });
+  }
+
+  const parsed = adminUpdateSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: "Invalid payload",
+      message: "Expected { identifier, role }.",
+    });
+  }
+
+  const target = await prisma.user.findFirst({
+    where: {
+      OR: [{ username: parsed.data.identifier }, { email: parsed.data.identifier }],
+    },
+  });
+
+  if (!target) {
+    return res.status(404).json({
+      error: "User not found",
+      message: "No user matches that identifier.",
+    });
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: target.id },
+    data: { role: parsed.data.role },
+  });
+
+  return res.json({ user: toAuthUser(updated) });
 });
 
 const filesFieldSchema = z
@@ -765,7 +1212,7 @@ if (authConfig.enabled) {
     if (!session) {
       return next(new Error("Unauthorized"));
     }
-    (socket as { authUser?: string }).authUser = session.username;
+    (socket as { authUserId?: string }).authUserId = session.userId;
     return next();
   });
 }
@@ -1409,5 +1856,9 @@ const ensureTrashCollection = async () => {
 httpServer.listen(PORT, async () => {
   await initializeUploadDir();
   await ensureTrashCollection();
+  await ensureSystemConfig();
+  await ensureInitialAdminUser();
   console.log(`Server running on port ${PORT}`);
 });
+
+export default app;

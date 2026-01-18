@@ -75,16 +75,11 @@ export const importDrawings = async (
           headers: {
             // Backend uses this header to apply stricter validation for imported files.
             "X-Imported-File": "true",
-          },
-          onUploadProgress: (progressEvent) => {
-            if (onProgress && progressEvent.total) {
-              const percentCompleted = Math.round(
-                (progressEvent.loaded * 100) / progressEvent.total
-              );
-              onProgress(fileIndex, 'uploading', percentCompleted);
-            }
+            "Content-Type": "application/json",
           },
         });
+
+        if (onProgress) onProgress(fileIndex, 'uploading', 100);
 
         if (onProgress) onProgress(fileIndex, 'success', 100);
         successCount++;

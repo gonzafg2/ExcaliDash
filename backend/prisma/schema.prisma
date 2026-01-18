@@ -40,3 +40,20 @@ model Library {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+model User {
+  id           String  @id @default(uuid())
+  username     String? @unique
+  email        String? @unique
+  passwordHash String
+  role         String  @default("USER")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model SystemConfig {
+  id                  String   @id @default("default")
+  registrationEnabled Boolean  @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}

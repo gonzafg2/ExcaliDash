@@ -52,6 +52,8 @@ test.describe("Drag and Drop - Collections", () => {
 
     await page.goto("/");
     await page.waitForLoadState("networkidle");
+    await page.getByPlaceholder("Search drawings...").fill(drawing.name);
+    await page.waitForTimeout(500);
 
     // Find the drawing card
     const card = page.locator(`#drawing-card-${drawing.id}`);

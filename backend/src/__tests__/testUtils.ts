@@ -5,19 +5,24 @@ import { PrismaClient } from "../generated/client";
 import path from "path";
 import { execSync } from "child_process";
 
+const testDbSuffix =
+  process.env.VITEST_POOL_ID || process.env.VITEST_WORKER_ID || String(process.pid);
+
 // Use a separate test database
-const TEST_DB_PATH = path.resolve(__dirname, "../../prisma/test.db");
+const TEST_DB_PATH = path.resolve(__dirname, `../../prisma/test-${testDbSuffix}.db`);
+const TEST_DATABASE_URL = `file:${TEST_DB_PATH}`;
+
+export const getTestDatabaseUrl = () => TEST_DATABASE_URL;
 
 /**
  * Get a test Prisma client pointing to the test database
  */
 export const getTestPrisma = () => {
-  const databaseUrl = `file:${TEST_DB_PATH}`;
-  process.env.DATABASE_URL = databaseUrl;
+  process.env.DATABASE_URL = TEST_DATABASE_URL;
   return new PrismaClient({
     datasources: {
       db: {
-        url: databaseUrl,
+        url: TEST_DATABASE_URL,
       },
     },
   });
@@ -27,14 +32,23 @@ export const getTestPrisma = () => {
  * Setup the test database by running migrations
  */
 export const setupTestDb = () => {
-  const databaseUrl = `file:${TEST_DB_PATH}`;
-  process.env.DATABASE_URL = databaseUrl;
+  process.env.DATABASE_URL = TEST_DATABASE_URL;
+
+  // Remove existing DB to avoid locked state in parallel runs
+  try {
+    execSync(`rm -f "${TEST_DB_PATH}"`, {
+      cwd: path.resolve(__dirname, "../../"),
+      stdio: "pipe",
+    });
+  } catch {
+    // ignore cleanup failures
+  }
   
   // Run Prisma migrations to create the test database
   try {
     execSync("npx prisma db push --skip-generate", {
       cwd: path.resolve(__dirname, "../../"),
-      env: { ...process.env, DATABASE_URL: databaseUrl },
+      env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL },
       stdio: "pipe",
     });
   } catch (error) {
@@ -52,6 +66,8 @@ export const cleanupTestDb = async (prisma: PrismaClient) => {
   await prisma.collection.deleteMany({
     where: { id: { not: "trash" } },
   });
+  await prisma.user.deleteMany({});
+  await prisma.systemConfig.deleteMany({});
 };
 
 /**
@@ -67,6 +83,12 @@ export const initTestDb = async (prisma: PrismaClient) => {
       data: { id: "trash", name: "Trash" },
     });
   }
+
+  await prisma.systemConfig.upsert({
+    where: { id: "default" },
+    update: {},
+    create: { id: "default", registrationEnabled: false },
+  });
 };
 
 /**

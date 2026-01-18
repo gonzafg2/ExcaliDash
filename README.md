@@ -156,24 +156,32 @@ Without this, each container generates its own ephemeral CSRF secret, causing to
 
 ### Optional Authentication
 
-ExcaliDash can enforce a single username/password to protect the dashboard and API.
-Set these backend environment variables to enable it:
+ExcaliDash supports multi-user authentication with role-based administration.
+The first admin user can be seeded via environment variables, or created in the UI
+when no users exist. Set these backend environment variables to bootstrap an admin:
 
 ```bash
+# Optional (defaults to "admin")
 AUTH_USERNAME=admin
+# Optional (defaults to empty)
+AUTH_EMAIL=admin@example.com
+# Optional (if omitted, a secure random password is generated and logged)
 AUTH_PASSWORD=change-me
 # Recommended: keep sessions stable across restarts
 AUTH_SESSION_SECRET=your-random-secret
 # Optional (default: 168 hours)
 AUTH_SESSION_TTL_HOURS=168
+# Optional (default: 7)
+AUTH_MIN_PASSWORD_LENGTH=7
 # Optional (default: excalidash_auth)
 AUTH_COOKIE_NAME=excalidash_auth
 # Optional: lax | strict | none (use "none" for cross-site hosting)
 AUTH_COOKIE_SAMESITE=lax
 ```
 
-When enabled, the UI prompts for a login before accessing any drawings,
-and all API/WebSocket traffic requires the session cookie.
+Once logged in, admins can toggle user registration and grant other admins from
+Settings. If no admin credentials are provided, the UI will prompt to create the
+first admin account.
 
 # Development
 

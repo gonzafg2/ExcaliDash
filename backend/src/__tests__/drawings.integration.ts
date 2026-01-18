@@ -314,10 +314,11 @@ describe("Security Sanitization - Image Data URLs", () => {
 
 // Database integration tests
 describe("Drawing API - Database Round-Trip", () => {
-  const prisma = getTestPrisma();
+  let prisma: ReturnType<typeof getTestPrisma>;
 
   beforeAll(async () => {
     setupTestDb();
+    prisma = getTestPrisma();
     await initTestDb(prisma);
   });
 

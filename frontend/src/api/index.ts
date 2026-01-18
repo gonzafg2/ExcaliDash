@@ -11,7 +11,9 @@ export const api = axios.create({
 export type AuthStatus = {
   enabled: boolean;
   authenticated: boolean;
-  user: { username: string } | null;
+  registrationEnabled: boolean;
+  bootstrapRequired: boolean;
+  user: { id: string; username: string | null; email: string | null; role: "ADMIN" | "USER" } | null;
 };
 
 let unauthorizedHandler: (() => void) | null = null;
@@ -130,6 +132,43 @@ export const login = async (username: string, password: string) => {
 
 export const logout = async () => {
   const response = await api.post<{ authenticated: boolean }>("/auth/logout");
+  return response.data;
+};
+
+export const register = async (payload: {
+  username?: string;
+  email?: string;
+  password: string;
+}) => {
+  const response = await api.post<{ user: AuthStatus["user"] }>("/auth/register", payload);
+  return response.data;
+};
+
+export const bootstrapAdmin = async (payload: {
+  username?: string;
+  email?: string;
+  password: string;
+}) => {
+  const response = await api.post<{ user: AuthStatus["user"]; authenticated: boolean }>(
+    "/auth/bootstrap",
+    payload
+  );
+  return response.data;
+};
+
+export const setRegistrationEnabled = async (enabled: boolean) => {
+  const response = await api.post<{ registrationEnabled: boolean }>(
+    "/auth/registration/toggle",
+    { enabled }
+  );
+  return response.data;
+};
+
+export const updateUserRole = async (identifier: string, role: "ADMIN" | "USER") => {
+  const response = await api.post<{ user: AuthStatus["user"] }>("/auth/admins", {
+    identifier,
+    role,
+  });
   return response.data;
 };
 

@@ -12,7 +12,9 @@ import * as api from "../api";
 type AuthState = {
   enabled: boolean;
   authenticated: boolean;
-  user: { username: string } | null;
+  registrationEnabled: boolean;
+  bootstrapRequired: boolean;
+  user: { id: string; username: string | null; email: string | null; role: "ADMIN" | "USER" } | null;
   loading: boolean;
   statusError: string | null;
 };
@@ -21,6 +23,10 @@ type AuthContextValue = {
   state: AuthState;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  register: (payload: { username?: string; email?: string; password: string }) => Promise<void>;
+  bootstrapAdmin: (payload: { username?: string; email?: string; password: string }) => Promise<void>;
+  setRegistrationEnabled: (enabled: boolean) => Promise<void>;
+  updateUserRole: (identifier: string, role: "ADMIN" | "USER") => Promise<void>;
   refreshStatus: () => Promise<void>;
 };
 
@@ -30,6 +36,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [state, setState] = useState<AuthState>({
     enabled: false,
     authenticated: false,
+    registrationEnabled: false,
+    bootstrapRequired: false,
     user: null,
     loading: true,
     statusError: null,
@@ -45,6 +53,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setState({
         enabled: status.enabled,
         authenticated: status.authenticated,
+        registrationEnabled: status.registrationEnabled,
+        bootstrapRequired: status.bootstrapRequired,
         user: status.user,
         loading: false,
         statusError: null,
@@ -89,14 +99,59 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     await refreshStatus();
   }, [refreshStatus]);
 
+  const register = useCallback(
+    async (payload: { username?: string; email?: string; password: string }) => {
+      await api.register(payload);
+      await refreshStatus();
+    },
+    [refreshStatus]
+  );
+
+  const bootstrapAdmin = useCallback(
+    async (payload: { username?: string; email?: string; password: string }) => {
+      await api.bootstrapAdmin(payload);
+      await refreshStatus();
+    },
+    [refreshStatus]
+  );
+
+  const setRegistrationEnabled = useCallback(
+    async (enabled: boolean) => {
+      await api.setRegistrationEnabled(enabled);
+      await refreshStatus();
+    },
+    [refreshStatus]
+  );
+
+  const updateUserRole = useCallback(
+    async (identifier: string, role: "ADMIN" | "USER") => {
+      await api.updateUserRole(identifier, role);
+      await refreshStatus();
+    },
+    [refreshStatus]
+  );
+
   const value = useMemo<AuthContextValue>(
     () => ({
       state,
       login,
       logout,
+      register,
+      bootstrapAdmin,
+      setRegistrationEnabled,
+      updateUserRole,
       refreshStatus,
     }),
-    [state, login, logout, refreshStatus]
+    [
+      state,
+      login,
+      logout,
+      register,
+      bootstrapAdmin,
+      setRegistrationEnabled,
+      updateUserRole,
+      refreshStatus,
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
