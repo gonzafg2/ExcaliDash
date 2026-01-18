@@ -109,7 +109,7 @@ export default defineConfig({
         {
           command: "cd ../backend && npx prisma db push && npx ts-node src/index.ts",
           url: `${BACKEND_URL}/health`,
-          reuseExistingServer: true,
+          reuseExistingServer: false,
           timeout: 120000,
           stdout: "pipe",
           stderr: "pipe",
@@ -131,7 +131,7 @@ export default defineConfig({
         {
           command: "cd ../frontend && npm run dev -- --host",
           url: FRONTEND_URL,
-          reuseExistingServer: true,
+          reuseExistingServer: false,
           timeout: 120000,
           stdout: "pipe",
           stderr: "pipe",

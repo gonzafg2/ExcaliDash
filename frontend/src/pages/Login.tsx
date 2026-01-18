@@ -1,19 +1,32 @@
-import React, { useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Loader2 } from "lucide-react";
 import { Logo } from "../components/Logo";
 import { useAuth } from "../context/AuthContext";
 
 export const Login: React.FC = () => {
-  const { state, login, register, bootstrapAdmin } = useAuth();
+  const { state, login, register, bootstrapAdmin, changePassword } = useAuth();
   const [identifier, setIdentifier] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showRegister, setShowRegister] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const mustResetPassword = Boolean(state.user?.mustResetPassword);
 
   const isBootstrap = state.bootstrapRequired;
   const canRegister = state.registrationEnabled;
+  const isPasswordReset = !isBootstrap && mustResetPassword;
+
+  useEffect(() => {
+    if (!isPasswordReset) return;
+    setIdentifier(state.user?.username || state.user?.email || "");
+    setCurrentPassword("");
+    setPassword("");
+    setConfirmPassword("");
+    setShowRegister(false);
+    setError(null);
+  }, [isPasswordReset, state.user]);
 
   const parseIdentifier = () => {
     const trimmed = identifier.trim();
@@ -24,12 +37,32 @@ export const Login: React.FC = () => {
     return { username: trimmed, email: "" };
   };
 
-  const handleSubmit = async (event: React.FormEvent) => {
+  const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     setError(null);
     setIsSubmitting(true);
 
     try {
+      if (isPasswordReset) {
+        if (password !== confirmPassword) {
+          setError("Passwords do not match.");
+          return;
+        }
+        if (!currentPassword.trim()) {
+          setError("Enter your current password.");
+          return;
+        }
+        if (password.length === 0) {
+          setError("Enter a new password.");
+          return;
+        }
+        await changePassword({ currentPassword: currentPassword.trim(), newPassword: confirmPassword });
+        setCurrentPassword("");
+        setPassword("");
+        setConfirmPassword("");
+        return;
+      }
+
       if (showRegister || isBootstrap) {
         if (password !== confirmPassword) {
           setError("Passwords do not match.");
@@ -68,9 +101,11 @@ export const Login: React.FC = () => {
           <p className="mt-2 text-sm text-slate-500 dark:text-neutral-400 font-medium">
             {isBootstrap
               ? "Create the initial admin account"
-              : showRegister
-                ? "Create a new account"
-                : "Sign in to access your drawings"}
+              : isPasswordReset
+                ? "Reset the admin password"
+                : showRegister
+                  ? "Create a new account"
+                  : "Sign in to access your drawings"}
           </p>
         </div>
 
@@ -88,12 +123,27 @@ export const Login: React.FC = () => {
             />
           </label>
 
+          {isPasswordReset && (
+            <label className="block text-sm font-semibold text-slate-700 dark:text-neutral-200">
+              Current Password
+              <input
+                type="password"
+                name="current-password"
+                autoComplete="current-password"
+                required
+                value={currentPassword}
+                onChange={(event) => setCurrentPassword(event.target.value)}
+                className="mt-2 w-full rounded-xl border-2 border-black dark:border-neutral-700 bg-white dark:bg-neutral-800 px-4 py-3 text-base text-slate-900 dark:text-white shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] dark:shadow-[3px_3px_0px_0px_rgba(255,255,255,0.2)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </label>
+          )}
+
           <label className="block text-sm font-semibold text-slate-700 dark:text-neutral-200">
-            Password
+            {isPasswordReset ? "New Password" : "Password"}
             <input
               type="password"
               name="password"
-              autoComplete={showRegister || isBootstrap ? "new-password" : "current-password"}
+              autoComplete={showRegister || isBootstrap || isPasswordReset ? "new-password" : "current-password"}
               required
               value={password}
               onChange={(event) => setPassword(event.target.value)}
@@ -101,7 +151,7 @@ export const Login: React.FC = () => {
             />
           </label>
 
-          {(showRegister || isBootstrap) && (
+          {(showRegister || isBootstrap || isPasswordReset) && (
             <label className="block text-sm font-semibold text-slate-700 dark:text-neutral-200">
               Confirm Password
               <input
@@ -131,6 +181,8 @@ export const Login: React.FC = () => {
               <Loader2 className="h-5 w-5 animate-spin" />
             ) : isBootstrap ? (
               "Create Admin"
+            ) : isPasswordReset ? (
+              "Reset password"
             ) : showRegister ? (
               "Create account"
             ) : (
@@ -138,7 +190,7 @@ export const Login: React.FC = () => {
             )}
           </button>
 
-          {!isBootstrap && (
+          {!isBootstrap && !isPasswordReset && (
             <button
               type="button"
               onClick={() => {

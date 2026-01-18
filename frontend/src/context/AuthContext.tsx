@@ -14,7 +14,13 @@ type AuthState = {
   authenticated: boolean;
   registrationEnabled: boolean;
   bootstrapRequired: boolean;
-  user: { id: string; username: string | null; email: string | null; role: "ADMIN" | "USER" } | null;
+  user: {
+    id: string;
+    username: string | null;
+    email: string | null;
+    role: "ADMIN" | "USER";
+    mustResetPassword?: boolean;
+  } | null;
   loading: boolean;
   statusError: string | null;
 };
@@ -25,6 +31,7 @@ type AuthContextValue = {
   logout: () => Promise<void>;
   register: (payload: { username?: string; email?: string; password: string }) => Promise<void>;
   bootstrapAdmin: (payload: { username?: string; email?: string; password: string }) => Promise<void>;
+  changePassword: (payload: { currentPassword: string; newPassword: string }) => Promise<void>;
   setRegistrationEnabled: (enabled: boolean) => Promise<void>;
   updateUserRole: (identifier: string, role: "ADMIN" | "USER") => Promise<void>;
   refreshStatus: () => Promise<void>;
@@ -72,6 +79,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, []);
 
   useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        refreshStatus();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [refreshStatus]);
+
+  useEffect(() => {
     refreshStatus();
   }, [refreshStatus]);
 
@@ -115,6 +133,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     [refreshStatus]
   );
 
+  const changePassword = useCallback(
+    async (payload: { currentPassword: string; newPassword: string }) => {
+      await api.changePassword(payload);
+      await refreshStatus();
+    },
+    [refreshStatus]
+  );
+
   const setRegistrationEnabled = useCallback(
     async (enabled: boolean) => {
       await api.setRegistrationEnabled(enabled);
@@ -138,6 +164,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       logout,
       register,
       bootstrapAdmin,
+      changePassword,
       setRegistrationEnabled,
       updateUserRole,
       refreshStatus,
@@ -148,11 +175,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       logout,
       register,
       bootstrapAdmin,
+      changePassword,
       setRegistrationEnabled,
       updateUserRole,
       refreshStatus,
     ]
   );
+
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

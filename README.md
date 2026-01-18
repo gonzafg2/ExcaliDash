@@ -179,9 +179,10 @@ AUTH_COOKIE_NAME=excalidash_auth
 AUTH_COOKIE_SAMESITE=lax
 ```
 
-Once logged in, admins can toggle user registration and grant other admins from
-Settings. If no admin credentials are provided, the UI will prompt to create the
-first admin account.
+Once logged in, admins can manage user registration settings and user roles from
+the Settings page. When no admin credentials are provided via environment variables,
+an initial admin user is created with a randomly generated password that is logged
+to the console on startup.
 
 # Development
 

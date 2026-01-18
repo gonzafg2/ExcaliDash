@@ -24,7 +24,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
     );
   }
 
-  if (state.enabled && !state.authenticated) {
+  if (state.enabled && (!state.authenticated || state.user?.mustResetPassword)) {
     return <Login />;
   }
 

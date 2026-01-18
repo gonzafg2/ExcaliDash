@@ -13,7 +13,13 @@ export type AuthStatus = {
   authenticated: boolean;
   registrationEnabled: boolean;
   bootstrapRequired: boolean;
-  user: { id: string; username: string | null; email: string | null; role: "ADMIN" | "USER" } | null;
+  user: {
+    id: string;
+    username: string | null;
+    email: string | null;
+    role: "ADMIN" | "USER";
+    mustResetPassword?: boolean;
+  } | null;
 };
 
 let unauthorizedHandler: (() => void) | null = null;
@@ -169,6 +175,14 @@ export const updateUserRole = async (identifier: string, role: "ADMIN" | "USER")
     identifier,
     role,
   });
+  return response.data;
+};
+
+export const changePassword = async (payload: {
+  currentPassword: string;
+  newPassword: string;
+}) => {
+  const response = await api.post<{ user: AuthStatus["user"] }>("/auth/password", payload);
   return response.data;
 };
 

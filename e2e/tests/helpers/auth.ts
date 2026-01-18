@@ -7,6 +7,7 @@ type AuthStatus = {
   enabled: boolean;
   authenticated: boolean;
   bootstrapRequired?: boolean;
+  user?: { mustResetPassword?: boolean } | null;
 };
 
 const AUTH_USERNAME = process.env.AUTH_USERNAME || "admin";
@@ -43,9 +44,43 @@ const fetchAuthStatus = async (request: APIRequestContext): Promise<AuthStatus> 
 
 export const ensureApiAuthenticated = async (request: APIRequestContext) => {
   const status = await fetchAuthStatus(request);
-  if (!status.enabled || status.authenticated) {
+  if (!status.enabled || (status.authenticated && !status.user?.mustResetPassword)) {
     return;
   }
+
+  const resetIfRequired = async () => {
+    if (!status.user?.mustResetPassword) return;
+
+    let resetResponse = await request.post(`${BASE_URL}/auth/password`, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(await getCsrfHeaders(request)),
+      },
+      data: {
+        currentPassword: AUTH_PASSWORD,
+        newPassword: AUTH_PASSWORD,
+      },
+    });
+
+    if (!resetResponse.ok() && resetResponse.status() === 403) {
+      await refreshCsrfToken(request);
+      resetResponse = await request.post(`${BASE_URL}/auth/password`, {
+        headers: {
+          "Content-Type": "application/json",
+          ...(await getCsrfHeaders(request)),
+        },
+        data: {
+          currentPassword: AUTH_PASSWORD,
+          newPassword: AUTH_PASSWORD,
+        },
+      });
+    }
+
+    if (!resetResponse.ok()) {
+      const text = await resetResponse.text();
+      throw new Error(`Failed to reset admin password: ${resetResponse.status()} ${text}`);
+    }
+  };
 
   if (status.bootstrapRequired) {
     let response = await request.post(`${BASE_URL}/auth/bootstrap`, {
@@ -78,6 +113,7 @@ export const ensureApiAuthenticated = async (request: APIRequestContext) => {
       throw new Error(`Failed to bootstrap test session: ${response.status()} ${text}`);
     }
 
+    await resetIfRequired();
     return;
   }
 

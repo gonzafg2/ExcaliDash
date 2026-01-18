@@ -160,6 +160,7 @@ type AuthenticatedUser = {
   username: string | null;
   email: string | null;
   role: string;
+  mustResetPassword?: boolean;
 };
 
 const toAuthUser = (user: AuthenticatedUser) => ({
@@ -167,6 +168,11 @@ const toAuthUser = (user: AuthenticatedUser) => ({
   username: user.username,
   email: user.email,
   role: user.role,
+});
+
+const toAuthUserWithResetFlag = (user: AuthenticatedUser & { mustResetPassword: boolean }) => ({
+  ...toAuthUser(user),
+  mustResetPassword: user.mustResetPassword,
 });
 
 const ensureSystemConfig = async () => {
@@ -220,6 +226,7 @@ const ensureInitialAdminUser = async () => {
       username: resolved.username,
       email: resolved.email,
       passwordHash,
+      mustResetPassword: resolved.generatedPassword,
       role: "ADMIN",
     },
   });
@@ -489,12 +496,14 @@ const authExemptPaths = new Set([
   "/auth/bootstrap",
   "/auth/registration/toggle",
   "/auth/admins",
+  "/auth/password",
 ]);
 
 const authNeedsSession = new Set([
   "/auth/logout",
   "/auth/registration/toggle",
   "/auth/admins",
+  "/auth/password",
 ]);
 
 const fetchSessionUser = async (
@@ -503,7 +512,7 @@ const fetchSessionUser = async (
   if (!session) return null;
   return prisma.user.findUnique({
     where: { id: session.userId },
-    select: { id: true, username: true, email: true, role: true },
+    select: { id: true, username: true, email: true, role: true, mustResetPassword: true },
   });
 };
 
@@ -639,6 +648,15 @@ const authLoginSchema = z.object({
   password: z.string().min(1).max(512),
 });
 
+const authChangePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(512),
+  newPassword: z.string().min(1).max(512),
+});
+
+const authChangePasswordResponse = (user: AuthenticatedUser & { mustResetPassword: boolean }) => ({
+  user: toAuthUserWithResetFlag(user),
+});
+
 const authRegisterSchema = z.object({
   username: z.string().trim().min(1).max(200).optional(),
   email: z.string().trim().email().max(200).optional(),
@@ -669,7 +687,7 @@ app.get("/auth/status", async (req, res) => {
     authenticated: Boolean(user),
     registrationEnabled: Boolean(config?.registrationEnabled),
     bootstrapRequired: totalUsers === 0,
-    user: user ? toAuthUser(user) : null,
+    user: user ? toAuthUserWithResetFlag(user as AuthenticatedUser & { mustResetPassword: boolean }) : null,
   });
 });
 
@@ -693,6 +711,14 @@ app.post("/auth/login", async (req, res) => {
         { email: identifier },
       ],
     },
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      role: true,
+      passwordHash: true,
+      mustResetPassword: true,
+    },
   });
 
   if (!user || !verifyPassword(password, user.passwordHash)) {
@@ -715,7 +741,7 @@ app.post("/auth/login", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   return res.json({
     authenticated: true,
-    user: toAuthUser(user),
+    user: toAuthUserWithResetFlag(user as AuthenticatedUser & { mustResetPassword: boolean }),
   });
 });
 
@@ -726,6 +752,56 @@ app.post("/auth/logout", (req, res) => {
   );
   res.setHeader("Cache-Control", "no-store");
   return res.json({ authenticated: false });
+});
+
+app.post("/auth/password", async (req, res) => {
+  const session = getAuthSessionFromCookie(req.headers.cookie, authConfig);
+  if (!session) {
+    return res.status(401).json({
+      error: "Unauthorized",
+      message: "Authentication required",
+    });
+  }
+
+  const parsed = authChangePasswordSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: "Invalid payload",
+      message: "Current and new passwords are required.",
+    });
+  }
+
+  const { currentPassword, newPassword } = parsed.data;
+  if (!isPasswordValid(authConfig, newPassword)) {
+    return res.status(400).json({
+      error: "Weak password",
+      message: `Password must be at least ${authConfig.minPasswordLength} characters.`,
+    });
+  }
+
+  const currentUser = await prisma.user.findUnique({
+    where: { id: session.userId },
+    select: { id: true, username: true, email: true, role: true, passwordHash: true },
+  });
+
+  if (!currentUser || !verifyPassword(currentPassword, currentUser.passwordHash)) {
+    return res.status(401).json({
+      error: "Unauthorized",
+      message: "Current password is incorrect.",
+    });
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: currentUser.id },
+    data: {
+      passwordHash: hashPassword(newPassword),
+      mustResetPassword: false,
+    },
+    select: { id: true, username: true, email: true, role: true, mustResetPassword: true },
+  });
+
+  res.setHeader("Cache-Control", "no-store");
+  return res.json(authChangePasswordResponse(updated));
 });
 
 app.post("/auth/register", async (req, res) => {
@@ -821,7 +897,7 @@ app.post("/auth/register", async (req, res) => {
   });
 
   return res.status(201).json({
-    user: toAuthUser(user),
+    user: toAuthUserWithResetFlag(user as AuthenticatedUser & { mustResetPassword: boolean }),
   });
 });
 
@@ -915,7 +991,7 @@ app.post("/auth/bootstrap", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     return res.status(201).json({
       authenticated: true,
-      user: toAuthUser(user),
+      user: toAuthUserWithResetFlag(user as AuthenticatedUser & { mustResetPassword: boolean }),
     });
   } catch (error) {
     console.error("Bootstrap failed:", error);
@@ -1009,9 +1085,10 @@ app.post("/auth/admins", async (req, res) => {
   const updated = await prisma.user.update({
     where: { id: target.id },
     data: { role: parsed.data.role },
+    select: { id: true, username: true, email: true, role: true, mustResetPassword: true },
   });
 
-  return res.json({ user: toAuthUser(updated) });
+  return res.json({ user: toAuthUserWithResetFlag(updated) });
 });
 
 const filesFieldSchema = z
