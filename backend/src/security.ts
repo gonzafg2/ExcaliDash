@@ -319,7 +319,16 @@ export const appStateSchema = z
       .enum(["solid", "dashed", "dotted"])
       .optional()
       .nullable(),
-    currentItemRoundness: z.enum(["sharp", "round"]).optional().nullable(),
+    currentItemRoundness: z
+      .union([
+        z.enum(["sharp", "round"]),
+        z.object({
+          type: z.enum(["round", "sharp"]),
+          value: z.number().finite().min(0).max(1),
+        }),
+      ])
+      .optional()
+      .nullable(),
     currentItemFontSize: z
       .number()
       .finite()
