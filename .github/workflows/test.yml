@@ -153,6 +153,7 @@ jobs:
           AUTH_USERNAME: admin
           AUTH_PASSWORD: admin123
           DATABASE_URL: file:${{ github.workspace }}/backend/prisma/e2e-test.db
+          START_SERVER_IN_TEST: "true"
           CSRF_MAX_REQUESTS: "10000"
           RATE_LIMIT_MAX_REQUESTS: "20000"
       
