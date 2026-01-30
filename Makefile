@@ -511,6 +511,17 @@ release-docker: ## Build and push release Docker images
 pre-release-docker: ## Build and push pre-release Docker images
 	./publish-docker-prerelease.sh
 
+dev-release: ## Build and push custom dev release (usage: make dev-release NAME=issue38)
+	@if [ -z "$(NAME)" ]; then \
+		echo "$(RED)ERROR: NAME parameter is required!$(NC)"; \
+		echo "$(YELLOW)Usage: make dev-release NAME=<custom-name>$(NC)"; \
+		echo "$(YELLOW)Example: make dev-release NAME=issue38$(NC)"; \
+		echo "$(YELLOW)  This will create tags like: 0.3.1-dev-issue38$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)Building custom dev release: $(NAME)$(NC)"
+	@./publish-docker-dev.sh $(NAME)
+
 #===============================================================================
 # DATABASE
 #===============================================================================
