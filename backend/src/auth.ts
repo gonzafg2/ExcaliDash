@@ -6,7 +6,7 @@ import bcrypt from "bcrypt";
 import jwt, { SignOptions } from "jsonwebtoken";
 import ms, { type StringValue } from "ms";
 import { z } from "zod";
-import { PrismaClient } from "./generated/client";
+import { PrismaClient, Prisma } from "./generated/client";
 import { config } from "./config";
 import { requireAuth, optionalAuth } from "./middleware/auth";
 import { sanitizeText } from "./security";
@@ -317,6 +317,30 @@ const resolveExpiresAt = (expiresIn: string, fallbackMs: number): Date => {
   const parsed = ms(expiresIn as StringValue);
   const ttlMs = typeof parsed === "number" && parsed > 0 ? parsed : fallbackMs;
   return new Date(Date.now() + ttlMs);
+};
+
+class HttpError extends Error {
+  statusCode: number;
+
+  constructor(statusCode: number, message: string) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+}
+
+const isMissingRefreshTokenTableError = (error: unknown): boolean => {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    // P2021 = "The table `<table>` does not exist in the current database."
+    if (error.code === "P2021") {
+      return true;
+    }
+  }
+
+  const message =
+    typeof error === "object" && error && "message" in error
+      ? String((error as any).message)
+      : "";
+  return /no such table:\s*RefreshToken/i.test(message);
 };
 
 const getRefreshTokenExpiresAt = (): Date =>
@@ -730,37 +754,6 @@ router.post("/refresh", async (req: Request, res: Response) => {
       // If refresh token rotation is enabled, check database and rotate
       if (config.enableRefreshTokenRotation) {
         try {
-          // Check if refresh token exists in database and is not revoked
-          const storedToken = await prisma.refreshToken.findUnique({
-            where: { token: oldRefreshToken },
-          });
-
-          if (!storedToken || storedToken.revoked || storedToken.userId !== user.id) {
-            return res.status(401).json({
-              error: "Unauthorized",
-              message: "Invalid or revoked refresh token",
-            });
-          }
-
-          // Check if token has expired
-          if (new Date() > storedToken.expiresAt) {
-            // Mark as revoked
-            await prisma.refreshToken.update({
-              where: { id: storedToken.id },
-              data: { revoked: true },
-            });
-            return res.status(401).json({
-              error: "Unauthorized",
-              message: "Refresh token has expired",
-            });
-          }
-
-          // Revoke old refresh token
-          await prisma.refreshToken.update({
-            where: { id: storedToken.id },
-            data: { revoked: true },
-          });
-
           // Generate new tokens (rotation)
           const { accessToken, refreshToken: newRefreshToken } = generateTokens(
             user.id,
@@ -768,27 +761,66 @@ router.post("/refresh", async (req: Request, res: Response) => {
             { impersonatorId: decoded.impersonatorId }
           );
 
-          // Store new refresh token
           const expiresAt = getRefreshTokenExpiresAt();
 
-          await prisma.refreshToken.create({
-            data: {
-              userId: user.id,
-              token: newRefreshToken,
-              expiresAt,
-            },
+          await prisma.$transaction(async (tx) => {
+            const storedToken = await tx.refreshToken.findUnique({
+              where: { token: oldRefreshToken },
+            });
+
+            if (!storedToken || storedToken.userId !== user.id || storedToken.revoked) {
+              throw new HttpError(401, "Invalid or revoked refresh token");
+            }
+
+            if (new Date() > storedToken.expiresAt) {
+              throw new HttpError(401, "Refresh token has expired");
+            }
+
+            // Revoke old token first; if anything fails after this, the transaction rolls back.
+            const revoked = await tx.refreshToken.updateMany({
+              where: { id: storedToken.id, revoked: false },
+              data: { revoked: true },
+            });
+            if (revoked.count !== 1) {
+              throw new HttpError(401, "Invalid or revoked refresh token");
+            }
+
+            await tx.refreshToken.create({
+              data: {
+                userId: user.id,
+                token: newRefreshToken,
+                expiresAt,
+              },
+            });
           });
 
-          return res.json({ 
+          return res.json({
             accessToken,
             refreshToken: newRefreshToken,
           });
         } catch (error) {
-          // If table doesn't exist (feature disabled), fall back to old behavior
-          if (process.env.NODE_ENV === "development") {
-            console.debug("Refresh token rotation skipped (feature disabled or table missing)");
+          if (error instanceof HttpError) {
+            return res.status(error.statusCode).json({
+              error: "Unauthorized",
+              message: error.message,
+            });
           }
-          // Fall through to old behavior below
+
+          // If table doesn't exist (feature disabled / migration not applied), fall back.
+          if (isMissingRefreshTokenTableError(error)) {
+            if (process.env.NODE_ENV === "development") {
+              console.debug(
+                "Refresh token rotation skipped (feature disabled or table missing)"
+              );
+            }
+            // Fall through to old behavior below
+          } else {
+            console.error("Refresh token rotation error:", error);
+            return res.status(500).json({
+              error: "Internal server error",
+              message: "Failed to rotate refresh token",
+            });
+          }
         }
       }
 

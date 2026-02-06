@@ -301,7 +301,16 @@ export const importLegacyFiles = async (
           (parsed as any).elements &&
           (parsed as any).appState
         ) {
-          const result = await importDrawings([file], targetCollectionId, undefined, onProgress);
+          const mappedOnProgress = onProgress
+            ? (_idx: number, status: UploadStatus, progress: number, error?: string) =>
+                onProgress(fileIndex, status, progress, error)
+            : undefined;
+          const result = await importDrawings(
+            [file],
+            targetCollectionId,
+            undefined,
+            mappedOnProgress
+          );
           successCount += result.success;
           failCount += result.failed;
           errors.push(...result.errors);

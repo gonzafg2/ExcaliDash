@@ -317,7 +317,7 @@ app.use(
   cors({
     origin: (origin, cb) => cb(null, isAllowedOrigin(origin ?? undefined)),
     credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization", "x-csrf-token"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-csrf-token", "x-imported-file"],
     exposedHeaders: ["x-csrf-token", "x-request-id"],
   })
 );
