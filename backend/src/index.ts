@@ -373,6 +373,12 @@ const generalRateLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  // We intentionally allow `app.set("trust proxy", true)` for deployments with multiple proxy layers.
+  // express-rate-limit warns (and can throw) in that configuration; we accept the risk in favor of
+  // correct client IP handling and rely on deployment-level network controls.
+  validate: {
+    trustProxy: false,
+  },
 });
 
 app.use(generalRateLimiter);
@@ -1850,6 +1856,23 @@ const parseOptionalJson = <T>(raw: unknown, fallback: T): T => {
   return fallback;
 };
 
+const openReadonlySqliteDb = (filePath: string): any => {
+  try {
+    // Prefer Node's built-in SQLite when available (no native addon rebuild needed).
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { DatabaseSync } = require("node:sqlite") as any;
+    return new DatabaseSync(filePath, {
+      readOnly: true,
+      enableForeignKeyConstraints: false,
+    });
+  } catch (_err) {
+    // Fall back to better-sqlite3 on older Node versions.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const Database = require("better-sqlite3") as any;
+    return new Database(filePath, { readonly: true, fileMustExist: true });
+  }
+};
+
 const getCurrentLatestPrismaMigrationName = async (): Promise<string | null> => {
   try {
     const migrationsDir = path.resolve(backendRoot, "prisma/migrations");
@@ -1887,20 +1910,9 @@ app.post("/import/sqlite/legacy/verify", requireAuth, upload.single("db"), async
       return res.status(400).json({ error: "Invalid database format" });
     }
 
-    // Use better-sqlite3 to inspect the legacy DB file
-    let Database: any;
+    let db: any | null = null;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      Database = require("better-sqlite3") as any;
-    } catch (error) {
-      return res.status(500).json({
-        error: "Legacy DB support unavailable",
-        message:
-          "Failed to load better-sqlite3. Run `cd backend && npm rebuild better-sqlite3` (or reinstall dependencies) and try again.",
-      });
-    }
-    const db = new Database(stagedPath, { readonly: true, fileMustExist: true });
-    try {
+      db = openReadonlySqliteDb(stagedPath);
       const tables: string[] = db
         .prepare("SELECT name FROM sqlite_master WHERE type='table'")
         .all()
@@ -1941,9 +1953,15 @@ app.post("/import/sqlite/legacy/verify", requireAuth, upload.single("db"), async
         latestMigration,
         currentLatestMigration: await getCurrentLatestPrismaMigrationName(),
       });
+    } catch (_error) {
+      return res.status(500).json({
+        error: "Legacy DB support unavailable",
+        message:
+          "Failed to open the SQLite database for inspection. If you're on Node < 22, you may need to rebuild native dependencies (e.g. `cd backend && npm rebuild better-sqlite3`).",
+      });
     } finally {
       try {
-        db.close();
+        db?.close?.();
       } catch { }
     }
   } finally {
@@ -1967,19 +1985,9 @@ app.post("/import/sqlite/legacy", requireAuth, upload.single("db"), asyncHandler
       return res.status(400).json({ error: "Invalid database format" });
     }
 
-    let Database: any;
+    let legacyDb: any | null = null;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      Database = require("better-sqlite3") as any;
-    } catch (error) {
-      return res.status(500).json({
-        error: "Legacy DB support unavailable",
-        message:
-          "Failed to load better-sqlite3. Run `cd backend && npm rebuild better-sqlite3` (or reinstall dependencies) and try again.",
-      });
-    }
-    const legacyDb = new Database(stagedPath, { readonly: true, fileMustExist: true });
-    try {
+      legacyDb = openReadonlySqliteDb(stagedPath);
       const tables: string[] = legacyDb
         .prepare("SELECT name FROM sqlite_master WHERE type='table'")
         .all()
@@ -2159,9 +2167,15 @@ app.post("/import/sqlite/legacy", requireAuth, upload.single("db"), asyncHandler
         collections: { created: collectionsCreated, updated: collectionsUpdated, idConflicts: collectionIdConflicts },
         drawings: { created: drawingsCreated, updated: drawingsUpdated, idConflicts: drawingIdConflicts },
       });
+    } catch (_error) {
+      return res.status(500).json({
+        error: "Legacy DB support unavailable",
+        message:
+          "Failed to open the SQLite database for import. If you're on Node < 22, you may need to rebuild native dependencies (e.g. `cd backend && npm rebuild better-sqlite3`).",
+      });
     } finally {
       try {
-        legacyDb.close();
+        legacyDb?.close?.();
       } catch { }
     }
   } finally {
@@ -2172,9 +2186,17 @@ app.post("/import/sqlite/legacy", requireAuth, upload.single("db"), asyncHandler
 // Error handler middleware (must be last)
 app.use(errorHandler);
 
-httpServer.listen(PORT, async () => {
-  await initializeUploadDir();
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Environment: ${config.nodeEnv}`);
-  console.log(`Frontend URL: ${config.frontendUrl}`);
-});
+export { app, httpServer };
+
+const isMain =
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  typeof require !== "undefined" && require.main === module;
+
+if (isMain) {
+  httpServer.listen(PORT, async () => {
+    await initializeUploadDir();
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Environment: ${config.nodeEnv}`);
+    console.log(`Frontend URL: ${config.frontendUrl}`);
+  });
+}
