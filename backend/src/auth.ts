@@ -121,6 +121,9 @@ const buildLoginAttemptLimiter = (cfg: LoginRateLimitConfig) => {
     },
     standardHeaders: true,
     legacyHeaders: false,
+    validate: {
+      trustProxy: false,
+    },
     store,
     keyGenerator: (req) => {
       const identifier = resolveAuthIdentifier(req as Request);
@@ -165,6 +168,9 @@ const accountActionRateLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: {
+    trustProxy: false,
+  },
 });
 
 // Validation schemas
