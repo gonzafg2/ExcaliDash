@@ -26,6 +26,7 @@ import {
   getCsrfTokenHeader,
   getOriginFromReferer,
 } from "./security";
+import jwt from "jsonwebtoken";
 import { config } from "./config";
 import { requireAuth } from "./middleware/auth";
 import { errorHandler, asyncHandler } from "./middleware/errorHandler";
@@ -176,11 +177,13 @@ type DrawingsCacheEntry = { body: Buffer; expiresAt: number };
 const drawingsCache = new Map<string, DrawingsCacheEntry>();
 
 const buildDrawingsCacheKey = (keyParts: {
+  userId: string;
   searchTerm: string;
   collectionFilter: string;
   includeData: boolean;
 }) =>
   JSON.stringify([
+    keyParts.userId,
     keyParts.searchTerm,
     keyParts.collectionFilter,
     keyParts.includeData ? "full" : "summary",
@@ -721,16 +724,92 @@ interface User {
 
 const roomUsers = new Map<string, User[]>();
 
+// Track which authenticated user owns each socket for authorization checks
+const socketUserMap = new Map<string, string>();
+
+/**
+ * Verify JWT from Socket.io auth and check if auth is required.
+ * When auth is disabled (single-user mode), all connections are allowed.
+ */
+const getSocketAuthUserId = async (token?: string): Promise<string | null> => {
+  // Check if auth is enabled
+  const systemConfig = await prisma.systemConfig.findUnique({
+    where: { id: "default" },
+    select: { authEnabled: true },
+  });
+
+  if (!systemConfig || !systemConfig.authEnabled) {
+    // Auth disabled: allow all connections (single-user / bootstrap mode)
+    return "bootstrap-admin";
+  }
+
+  // Auth enabled: require valid JWT
+  if (!token) return null;
+
+  try {
+    const decoded = jwt.verify(token, config.jwtSecret) as Record<string, unknown>;
+    if (
+      typeof decoded.userId !== "string" ||
+      typeof decoded.email !== "string" ||
+      decoded.type !== "access"
+    ) {
+      return null;
+    }
+
+    // Verify user is still active
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+      select: { id: true, isActive: true },
+    });
+
+    if (!user || !user.isActive) return null;
+    return user.id;
+  } catch {
+    return null;
+  }
+};
+
+io.use(async (socket, next) => {
+  try {
+    const token = socket.handshake.auth?.token as string | undefined;
+    const userId = await getSocketAuthUserId(token);
+
+    if (!userId) {
+      return next(new Error("Authentication required"));
+    }
+
+    socketUserMap.set(socket.id, userId);
+    next();
+  } catch {
+    next(new Error("Authentication failed"));
+  }
+});
+
 io.on("connection", (socket) => {
+  const authenticatedUserId = socketUserMap.get(socket.id);
+
   socket.on(
     "join-room",
-    ({
+    async ({
       drawingId,
       user,
     }: {
       drawingId: string;
       user: Omit<User, "socketId" | "isActive">;
     }) => {
+      // Verify the authenticated user owns this drawing
+      if (authenticatedUserId) {
+        const drawing = await prisma.drawing.findFirst({
+          where: { id: drawingId, userId: authenticatedUserId },
+          select: { id: true },
+        });
+
+        if (!drawing) {
+          socket.emit("error", { message: "Drawing not found or access denied" });
+          return;
+        }
+      }
+
       const roomId = `drawing_${drawingId}`;
       socket.join(roomId);
 
@@ -771,6 +850,7 @@ io.on("connection", (socket) => {
   );
 
   socket.on("disconnect", () => {
+    socketUserMap.delete(socket.id);
     roomUsers.forEach((users, roomId) => {
       const index = users.findIndex((u) => u.socketId === socket.id);
       if (index !== -1) {
@@ -840,6 +920,7 @@ app.get("/drawings", requireAuth, asyncHandler(async (req, res, next) => {
         : false;
 
     const cacheKey = buildDrawingsCacheKey({
+      userId: req.user.id,
       searchTerm: searchTerm ?? "",
       collectionFilter: collectionFilterKey,
       includeData: shouldIncludeData,

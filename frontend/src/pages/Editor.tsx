@@ -267,9 +267,11 @@ export const Editor: React.FC = () => {
       ? window.location.origin
       : (import.meta.env.VITE_API_URL || 'http://localhost:8000');
 
+    const authToken = localStorage.getItem('excalidash-access-token');
     const socket = io(socketUrl, {
       path: '/socket.io',
       transports: ['websocket', 'polling'],
+      auth: authToken ? { token: authToken } : {},
     });
     socketRef.current = socket;
 
