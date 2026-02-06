@@ -6,6 +6,7 @@
   "scripts": {
     "predev": "node scripts/predev-migrate.cjs",
     "dev": "nodemon src/index.ts",
+    "admin:recover": "node scripts/admin-recover.cjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
@@ -35,6 +36,7 @@
     "helmet": "^8.1.0",
     "jsdom": "^22.1.0",
     "jsonwebtoken": "^9.0.3",
+    "jszip": "^3.10.1",
     "ms": "^2.1.3",
     "multer": "^2.0.2",
     "prisma": "^5.22.0",

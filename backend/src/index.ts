@@ -8,6 +8,7 @@ import { Server } from "socket.io";
 import { Worker } from "worker_threads";
 import multer from "multer";
 import archiver from "archiver";
+import JSZip from "jszip";
 import { z } from "zod";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
@@ -32,18 +33,7 @@ import authRouter from "./auth";
 import { logAuditEvent } from "./utils/audit";
 
 const backendRoot = path.resolve(__dirname, "../");
-const defaultDbPath = path.resolve(backendRoot, "prisma/dev.db");
 console.log("Resolved DATABASE_URL:", process.env.DATABASE_URL);
-
-// Helper to get the resolved database file path
-const getResolvedDbPath = (): string => {
-  const dbUrl = process.env.DATABASE_URL || `file:${defaultDbPath}`;
-  if (dbUrl.startsWith("file:")) {
-    return dbUrl.replace(/^file:/, "");
-  }
-  // Fallback to default for non-file URLs (e.g., Postgres)
-  return defaultDbPath;
-};
 
 const normalizeOrigins = (rawOrigins?: string | null): string[] => {
   const fallback = "http://localhost:6767";
@@ -88,26 +78,38 @@ const isAllowedOrigin = (origin?: string): boolean => {
 
 const uploadDir = path.resolve(__dirname, "../uploads");
 
-const moveFile = async (source: string, destination: string) => {
+let cachedBackendVersion: string | null = null;
+const getBackendVersion = (): string => {
+  if (cachedBackendVersion) return cachedBackendVersion;
   try {
-    await fsPromises.rename(source, destination);
-  } catch (error) {
-    const err = error as NodeJS.ErrnoException;
-    if (!err || err.code !== "EXDEV") {
-      throw error;
-    }
-
-    await fsPromises
-      .unlink(destination)
-      .catch((unlinkError: NodeJS.ErrnoException) => {
-        if (unlinkError && unlinkError.code !== "ENOENT") {
-          throw unlinkError;
-        }
-      });
-
-    await fsPromises.copyFile(source, destination);
-    await fsPromises.unlink(source);
+    const raw = fs.readFileSync(path.resolve(backendRoot, "package.json"), "utf8");
+    const parsed = JSON.parse(raw) as { version?: string };
+    cachedBackendVersion = typeof parsed.version === "string" ? parsed.version : "unknown";
+  } catch {
+    cachedBackendVersion = "unknown";
   }
+  return cachedBackendVersion;
+};
+
+const sanitizePathSegment = (input: string, fallback: string): string => {
+  const value = typeof input === "string" ? input.trim() : "";
+  const cleaned = value
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
+    .replace(/\s+/g, " ")
+    .slice(0, 120)
+    .trim();
+  return cleaned.length > 0 ? cleaned : fallback;
+};
+
+const makeUniqueName = (base: string, used: Set<string>): string => {
+  let candidate = base;
+  let n = 2;
+  while (used.has(candidate)) {
+    candidate = `${base}__${n}`;
+    n += 1;
+  }
+  used.add(candidate);
+  return candidate;
 };
 
 const initializeUploadDir = async () => {
@@ -1306,78 +1308,118 @@ app.put("/library", requireAuth, asyncHandler(async (req, res, next) => {
   });
 }));
 
-app.get("/export", requireAuth, asyncHandler(async (req, res, next) => {
+const excalidashManifestSchemaV1 = z.object({
+  format: z.literal("excalidash"),
+  formatVersion: z.literal(1),
+  exportedAt: z.string().min(1),
+  excalidashBackendVersion: z.string().optional(),
+  userId: z.string().optional(),
+  unorganizedFolder: z.string().min(1),
+  collections: z.array(
+    z.object({
+      id: z.string().min(1),
+      name: z.string(),
+      folder: z.string().min(1),
+      createdAt: z.string().optional(),
+      updatedAt: z.string().optional(),
+    })
+  ),
+  drawings: z.array(
+    z.object({
+      id: z.string().min(1),
+      name: z.string(),
+      filePath: z.string().min(1),
+      collectionId: z.string().nullable(),
+      version: z.number().int().optional(),
+      createdAt: z.string().optional(),
+      updatedAt: z.string().optional(),
+    })
+  ),
+});
+
+app.get("/export/excalidash", requireAuth, asyncHandler(async (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  // Export only user's data as JSON, not the entire database
-  const formatParam =
-    typeof req.query.format === "string"
-      ? req.query.format.toLowerCase()
-      : undefined;
+  const extParam = typeof req.query.ext === "string" ? req.query.ext.toLowerCase() : "";
+  const zipSuffix = extParam === "zip";
+  const date = new Date().toISOString().split("T")[0];
+  const filename = zipSuffix
+    ? `excalidash-backup-${date}.excalidash.zip`
+    : `excalidash-backup-${date}.excalidash`;
 
-  if (formatParam === "db" || formatParam === "sqlite") {
-    // Database export should be admin-only, return 403 for regular users
-    return res.status(403).json({
-      error: "Forbidden",
-      message: "Database export is not available",
-    });
-  }
+  const exportedAt = new Date().toISOString();
 
-  // Export user's drawings as JSON
   const drawings = await prisma.drawing.findMany({
-    where: {
-      userId: req.user.id,
-    },
-    include: {
-      collection: true,
-    },
+    where: { userId: req.user.id },
+    include: { collection: true },
   });
 
-  res.setHeader("Content-Type", "application/json");
-  res.setHeader(
-    "Content-Disposition",
-    `attachment; filename="excalidash-export-${new Date().toISOString().split("T")[0]}.json"`
-  );
+  const userCollections = await prisma.collection.findMany({
+    where: { userId: req.user.id },
+  });
 
-  res.json({
-    version: "1.0",
-    exportedAt: new Date().toISOString(),
+  const hasTrashDrawings = drawings.some((d) => d.collectionId === "trash");
+  const collectionsToExport = [...userCollections];
+  if (hasTrashDrawings && !collectionsToExport.some((c) => c.id === "trash")) {
+    const trash = await prisma.collection.findUnique({ where: { id: "trash" } });
+    if (trash) collectionsToExport.push(trash);
+  }
+
+  const exportSource = `${req.protocol}://${req.get("host")}`;
+
+  const usedFolderNames = new Set<string>();
+  const unorganizedFolder = makeUniqueName("Unorganized", usedFolderNames);
+
+  const folderByCollectionId = new Map<string, string>();
+  for (const collection of collectionsToExport) {
+    const base = sanitizePathSegment(collection.name, "Collection");
+    const folder = makeUniqueName(base, usedFolderNames);
+    folderByCollectionId.set(collection.id, folder);
+  }
+
+  type DrawingWithCollection = Prisma.DrawingGetPayload<{
+    include: { collection: true };
+  }>;
+
+  const drawingsManifest = drawings.map((drawing: DrawingWithCollection) => {
+    const folder = drawing.collectionId
+      ? folderByCollectionId.get(drawing.collectionId) || unorganizedFolder
+      : unorganizedFolder;
+    const fileNameBase = sanitizePathSegment(drawing.name, "Untitled");
+    const fileName = `${fileNameBase}__${drawing.id.slice(0, 8)}.excalidraw`;
+    const filePath = `${folder}/${fileName}`;
+    return {
+      id: drawing.id,
+      name: drawing.name,
+      filePath,
+      collectionId: drawing.collectionId ?? null,
+      version: drawing.version,
+      createdAt: drawing.createdAt.toISOString(),
+      updatedAt: drawing.updatedAt.toISOString(),
+    };
+  });
+
+  const manifest = {
+    format: "excalidash" as const,
+    formatVersion: 1 as const,
+    exportedAt,
+    excalidashBackendVersion: getBackendVersion(),
     userId: req.user.id,
-    drawings: drawings.map((d: any) => ({
-      id: d.id,
-      name: d.name,
-      elements: JSON.parse(d.elements),
-      appState: JSON.parse(d.appState),
-      files: JSON.parse(d.files || "{}"),
-      collectionId: d.collectionId,
-      collectionName: d.collection?.name || null,
-      createdAt: d.createdAt,
-      updatedAt: d.updatedAt,
+    unorganizedFolder,
+    collections: collectionsToExport.map((c) => ({
+      id: c.id,
+      name: c.name,
+      folder: folderByCollectionId.get(c.id) || sanitizePathSegment(c.name, "Collection"),
+      createdAt: c.createdAt.toISOString(),
+      updatedAt: c.updatedAt.toISOString(),
     })),
-  });
-}));
-
-app.get("/export/json", requireAuth, asyncHandler(async (req, res, next) => {
-  if (!req.user) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-
-  const drawings = await prisma.drawing.findMany({
-    where: {
-      userId: req.user.id,
-    },
-    include: {
-      collection: true,
-    },
-  });
+    drawings: drawingsManifest,
+  };
 
   res.setHeader("Content-Type", "application/zip");
-  res.setHeader(
-    "Content-Disposition",
-    `attachment; filename="excalidraw-drawings-${new Date().toISOString().split("T")[0]}.zip"`,
-  );
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
 
   const archive = archiver("zip", { zlib: { level: 9 } });
 
@@ -1388,30 +1430,14 @@ app.get("/export/json", requireAuth, asyncHandler(async (req, res, next) => {
 
   archive.pipe(res);
 
-  type DrawingWithCollection = Prisma.DrawingGetPayload<{
-    include: { collection: true };
-  }>;
+  // Root manifest
+  archive.append(JSON.stringify(manifest, null, 2), { name: "excalidash.manifest.json" });
 
-  type DrawingExportItem = {
-    name: string;
-    data: {
-      type: "excalidraw";
-      version: 2;
-      source: string;
-      elements: unknown[];
-      appState: Record<string, unknown>;
-      files: Record<string, unknown>;
-    };
-  };
-
-  const drawingsByCollection: Record<string, DrawingExportItem[]> = {};
-  const exportSource = `${req.protocol}://${req.get("host")}`;
-
-  drawings.forEach((drawing: DrawingWithCollection) => {
-    const collectionName = drawing.collection?.name || "Unorganized";
-    if (!drawingsByCollection[collectionName]) {
-      drawingsByCollection[collectionName] = [];
-    }
+  // Drawings organized by collection folder
+  const drawingsManifestById = new Map(drawingsManifest.map((d) => [d.id, d]));
+  for (const drawing of drawings) {
+    const meta = drawingsManifestById.get(drawing.id);
+    if (!meta) continue;
 
     const drawingData = {
       type: "excalidraw" as const,
@@ -1420,65 +1446,40 @@ app.get("/export/json", requireAuth, asyncHandler(async (req, res, next) => {
       elements: JSON.parse(drawing.elements) as unknown[],
       appState: JSON.parse(drawing.appState) as Record<string, unknown>,
       files: JSON.parse(drawing.files || "{}") as Record<string, unknown>,
+      excalidash: {
+        drawingId: drawing.id,
+        collectionId: drawing.collectionId ?? null,
+        exportedAt,
+      },
     };
 
-    drawingsByCollection[collectionName].push({
-      name: drawing.name,
-      data: drawingData,
-    });
-  });
+    archive.append(JSON.stringify(drawingData, null, 2), { name: meta.filePath });
+  }
 
-  Object.entries(drawingsByCollection).forEach(
-    ([collectionName, collectionDrawings]) => {
-      const folderName = collectionName.replace(/[<>:"/\\|?*]/g, "_");
-      collectionDrawings.forEach((drawing) => {
-        const fileName = `${drawing.name.replace(/[<>:"/\\|?*]/g, "_")}.excalidraw`;
-        const filePath = `${folderName}/${fileName}`;
+  const readme = `ExcaliDash Backup (.excalidash)
 
-        archive.append(JSON.stringify(drawing.data, null, 2), {
-          name: filePath,
-        });
-      });
-    },
-  );
+This file is a zip archive containing a versioned ExcaliDash manifest and your drawings,
+organized into folders by collection.
 
-  const readmeContent = `ExcaliDash Export
+Files:
+- excalidash.manifest.json (required)
+- <Collection Folder>/*.excalidraw
 
-This archive contains your ExcaliDash drawings organized by collection folders.
-
-Structure:
-- Each collection has its own folder
-- Each drawing is saved as a .excalidraw file
-- Files can be imported back into ExcaliDash
-
-Export Date: ${new Date().toISOString()}
-Total Collections: ${Object.keys(drawingsByCollection).length}
-Total Drawings: ${drawings.length}
-
-Collections:
-${Object.entries(drawingsByCollection)
-  .map(([name, drawings]) => `- ${name}: ${drawings.length} drawings`)
-  .join("\n")}
+ExportedAt: ${exportedAt}
+FormatVersion: 1
+BackendVersion: ${getBackendVersion()}
+Collections: ${collectionsToExport.length}
+Drawings: ${drawings.length}
 `;
 
-  archive.append(readmeContent, { name: "README.txt" });
+  archive.append(readme, { name: "README.txt" });
 
   await archive.finalize();
 }));
 
-// Database import endpoints should be admin-only or disabled in production
-// For now, we'll require auth but note that full DB import is dangerous
-app.post("/import/sqlite/verify", requireAuth, upload.single("db"), asyncHandler(async (req, res, next) => {
+app.post("/import/excalidash/verify", requireAuth, upload.single("archive"), asyncHandler(async (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ error: "Unauthorized" });
-  }
-
-  // Database import is dangerous - consider disabling in production
-  if (config.nodeEnv === "production") {
-    return res.status(403).json({
-      error: "Forbidden",
-      message: "Database import is disabled in production",
-    });
   }
 
   if (!req.file) {
@@ -1486,76 +1487,600 @@ app.post("/import/sqlite/verify", requireAuth, upload.single("db"), asyncHandler
   }
 
   const stagedPath = req.file.path;
-  const isValid = await verifyDatabaseIntegrityAsync(stagedPath);
-  await removeFileIfExists(stagedPath);
+  try {
+    const buffer = await fsPromises.readFile(stagedPath);
+    const zip = await JSZip.loadAsync(buffer);
+    const manifestFile = zip.file("excalidash.manifest.json");
+    if (!manifestFile) {
+      return res.status(400).json({
+        error: "Invalid backup",
+        message: "Missing excalidash.manifest.json",
+      });
+    }
+    const rawManifest = await manifestFile.async("string");
+    let manifestJson: unknown;
+    try {
+      manifestJson = JSON.parse(rawManifest);
+    } catch {
+      return res.status(400).json({
+        error: "Invalid backup manifest",
+        message: "excalidash.manifest.json is not valid JSON",
+      });
+    }
+    const parsed = excalidashManifestSchemaV1.safeParse(manifestJson);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid backup manifest",
+        message: "Malformed excalidash.manifest.json",
+      });
+    }
 
-  if (!isValid) {
-    return res.status(400).json({ error: "Invalid database format" });
+    const manifest = parsed.data;
+    res.json({
+      valid: true,
+      formatVersion: manifest.formatVersion,
+      exportedAt: manifest.exportedAt,
+      excalidashBackendVersion: manifest.excalidashBackendVersion || null,
+      collections: manifest.collections.length,
+      drawings: manifest.drawings.length,
+    });
+  } finally {
+    await removeFileIfExists(stagedPath);
   }
-
-  res.json({ valid: true, message: "Database file is valid" });
 }));
 
-app.post("/import/sqlite", requireAuth, upload.single("db"), asyncHandler(async (req, res, next) => {
+app.post("/import/excalidash", requireAuth, upload.single("archive"), asyncHandler(async (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ error: "Unauthorized" });
-  }
-
-  // Database import is dangerous - consider disabling in production
-  if (config.nodeEnv === "production") {
-    return res.status(403).json({
-      error: "Forbidden",
-      message: "Database import is disabled in production",
-    });
   }
 
   if (!req.file) {
     return res.status(400).json({ error: "No file uploaded" });
   }
 
-  const originalPath = req.file.path;
-  const stagedPath = path.join(
-    uploadDir,
-    `temp-${Date.now()}-${Math.random().toString(36).slice(2)}.db`
-  );
-
+  const stagedPath = req.file.path;
   try {
-    await moveFile(originalPath, stagedPath);
-  } catch (error) {
-    console.error("Failed to stage uploaded database", error);
-    await removeFileIfExists(originalPath);
-    await removeFileIfExists(stagedPath);
-    return res.status(500).json({ error: "Failed to stage uploaded file" });
-  }
+    const buffer = await fsPromises.readFile(stagedPath);
+    const zip = await JSZip.loadAsync(buffer);
+    const manifestFile = zip.file("excalidash.manifest.json");
+    if (!manifestFile) {
+      return res.status(400).json({
+        error: "Invalid backup",
+        message: "Missing excalidash.manifest.json",
+      });
+    }
 
-  const isValid = await verifyDatabaseIntegrityAsync(stagedPath);
-  if (!isValid) {
-    await removeFileIfExists(stagedPath);
-    return res
-      .status(400)
-      .json({ error: "Uploaded database failed integrity check" });
-  }
-
-  const dbPath = getResolvedDbPath();
-  const backupPath = `${dbPath}.backup`;
-
-  try {
+    const rawManifest = await manifestFile.async("string");
+    let manifestJson: unknown;
     try {
-      await fsPromises.access(dbPath);
-      await fsPromises.copyFile(dbPath, backupPath);
-    } catch { }
+      manifestJson = JSON.parse(rawManifest);
+    } catch {
+      return res.status(400).json({
+        error: "Invalid backup manifest",
+        message: "excalidash.manifest.json is not valid JSON",
+      });
+    }
+    const parsed = excalidashManifestSchemaV1.safeParse(manifestJson);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid backup manifest",
+        message: "Malformed excalidash.manifest.json",
+      });
+    }
 
-    await moveFile(stagedPath, dbPath);
-  } catch (error) {
-    console.error("Failed to replace database", error);
+    const manifest = parsed.data;
+
+    const collectionIdMap = new Map<string, string>();
+    let collectionsCreated = 0;
+    let collectionsUpdated = 0;
+    let collectionIdConflicts = 0;
+
+    for (const c of manifest.collections) {
+      if (c.id === "trash") {
+        collectionIdMap.set("trash", "trash");
+        continue;
+      }
+
+      const existing = await prisma.collection.findUnique({ where: { id: c.id } });
+      if (!existing) {
+        await prisma.collection.create({
+          data: {
+            id: c.id,
+            name: c.name,
+            userId: req.user.id,
+          },
+        });
+        collectionIdMap.set(c.id, c.id);
+        collectionsCreated += 1;
+        continue;
+      }
+
+      if (existing.userId === req.user.id) {
+        await prisma.collection.update({
+          where: { id: c.id },
+          data: { name: c.name },
+        });
+        collectionIdMap.set(c.id, c.id);
+        collectionsUpdated += 1;
+        continue;
+      }
+
+      const newId = uuidv4();
+      await prisma.collection.create({
+        data: {
+          id: newId,
+          name: c.name,
+          userId: req.user.id,
+        },
+      });
+      collectionIdMap.set(c.id, newId);
+      collectionsCreated += 1;
+      collectionIdConflicts += 1;
+    }
+
+    const resolveCollectionId = async (collectionId: string | null): Promise<string | null> => {
+      if (!collectionId) return null;
+      if (collectionId === "trash") {
+        await ensureTrashCollection(req.user!.id);
+        return "trash";
+      }
+      return collectionIdMap.get(collectionId) || null;
+    };
+
+    let drawingsCreated = 0;
+    let drawingsUpdated = 0;
+    let drawingIdConflicts = 0;
+
+    for (const d of manifest.drawings) {
+      const entry = zip.file(d.filePath);
+      if (!entry) {
+        return res.status(400).json({
+          error: "Invalid backup",
+          message: `Missing drawing file: ${d.filePath}`,
+        });
+      }
+
+      const raw = await entry.async("string");
+      const parsedJson = JSON.parse(raw) as any;
+
+      const elements = Array.isArray(parsedJson?.elements) ? parsedJson.elements : [];
+      const appState = typeof parsedJson?.appState === "object" && parsedJson.appState !== null ? parsedJson.appState : {};
+      const files = typeof parsedJson?.files === "object" && parsedJson.files !== null ? parsedJson.files : {};
+
+      const imported = {
+        name: d.name,
+        elements,
+        appState,
+        files,
+        preview: null as string | null,
+        collectionId: await resolveCollectionId(d.collectionId),
+      };
+
+      if (!validateImportedDrawing(imported)) {
+        return res.status(400).json({
+          error: "Invalid imported drawing",
+          message: `Drawing failed validation: ${d.filePath}`,
+        });
+      }
+
+      const sanitized = sanitizeDrawingData(imported);
+      const targetCollectionId = imported.collectionId;
+
+      const existing = await prisma.drawing.findUnique({ where: { id: d.id } });
+      if (!existing) {
+        await prisma.drawing.create({
+          data: {
+            id: d.id,
+            name: sanitizeText(imported.name, 255) || "Untitled Drawing",
+            elements: JSON.stringify(sanitized.elements),
+            appState: JSON.stringify(sanitized.appState),
+            files: JSON.stringify(sanitized.files || {}),
+            preview: sanitized.preview ?? null,
+            version: typeof d.version === "number" ? d.version : 1,
+            userId: req.user.id,
+            collectionId: targetCollectionId,
+          },
+        });
+        drawingsCreated += 1;
+        continue;
+      }
+
+      if (existing.userId === req.user.id) {
+        await prisma.drawing.update({
+          where: { id: d.id },
+          data: {
+            name: sanitizeText(imported.name, 255) || "Untitled Drawing",
+            elements: JSON.stringify(sanitized.elements),
+            appState: JSON.stringify(sanitized.appState),
+            files: JSON.stringify(sanitized.files || {}),
+            preview: sanitized.preview ?? null,
+            version: typeof d.version === "number" ? d.version : existing.version,
+            collectionId: targetCollectionId,
+          },
+        });
+        drawingsUpdated += 1;
+        continue;
+      }
+
+      const newId = uuidv4();
+      await prisma.drawing.create({
+        data: {
+          id: newId,
+          name: sanitizeText(imported.name, 255) || "Untitled Drawing",
+          elements: JSON.stringify(sanitized.elements),
+          appState: JSON.stringify(sanitized.appState),
+          files: JSON.stringify(sanitized.files || {}),
+          preview: sanitized.preview ?? null,
+          version: typeof d.version === "number" ? d.version : 1,
+          userId: req.user.id,
+          collectionId: targetCollectionId,
+        },
+      });
+      drawingsCreated += 1;
+      drawingIdConflicts += 1;
+    }
+
+    invalidateDrawingsCache();
+
+    res.json({
+      success: true,
+      message: "Backup imported successfully",
+      collections: {
+        created: collectionsCreated,
+        updated: collectionsUpdated,
+        idConflicts: collectionIdConflicts,
+      },
+      drawings: {
+        created: drawingsCreated,
+        updated: drawingsUpdated,
+        idConflicts: drawingIdConflicts,
+      },
+    });
+  } finally {
     await removeFileIfExists(stagedPath);
-    return res.status(500).json({ error: "Failed to replace database" });
+  }
+}));
+
+const findSqliteTable = (tables: string[], candidates: string[]): string | null => {
+  const byLower = new Map(tables.map((t) => [t.toLowerCase(), t]));
+  for (const candidate of candidates) {
+    const found = byLower.get(candidate.toLowerCase());
+    if (found) return found;
+  }
+  return null;
+};
+
+const parseOptionalJson = <T>(raw: unknown, fallback: T): T => {
+  if (typeof raw === "string") {
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      return fallback;
+    }
+  }
+  if (typeof raw === "object" && raw !== null) {
+    return raw as T;
+  }
+  return fallback;
+};
+
+const getCurrentLatestPrismaMigrationName = async (): Promise<string | null> => {
+  try {
+    const migrationsDir = path.resolve(backendRoot, "prisma/migrations");
+    const entries = await fsPromises.readdir(migrationsDir, { withFileTypes: true });
+    const dirs = entries
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+      .filter((name) => !name.startsWith("."));
+    if (dirs.length === 0) return null;
+    // Migration folders start with timestamps, so lexicographic max is newest.
+    dirs.sort();
+    return dirs[dirs.length - 1] || null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Legacy SQLite import (MERGE) - does not overwrite the current DB.
+ * This is safer than /import/sqlite which replaces the entire database file.
+ */
+app.post("/import/sqlite/legacy/verify", requireAuth, upload.single("db"), asyncHandler(async (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ error: "Unauthorized" });
   }
 
-  await prisma.$disconnect();
-  invalidateDrawingsCache();
+  if (!req.file) {
+    return res.status(400).json({ error: "No file uploaded" });
+  }
 
-  res.json({ success: true, message: "Database imported successfully" });
+  const stagedPath = req.file.path;
+  try {
+    const isValid = await verifyDatabaseIntegrityAsync(stagedPath);
+    if (!isValid) {
+      return res.status(400).json({ error: "Invalid database format" });
+    }
+
+    // Use better-sqlite3 to inspect the legacy DB file
+    let Database: any;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      Database = require("better-sqlite3") as any;
+    } catch (error) {
+      return res.status(500).json({
+        error: "Legacy DB support unavailable",
+        message:
+          "Failed to load better-sqlite3. Run `cd backend && npm rebuild better-sqlite3` (or reinstall dependencies) and try again.",
+      });
+    }
+    const db = new Database(stagedPath, { readonly: true, fileMustExist: true });
+    try {
+      const tables: string[] = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+        .all()
+        .map((row: any) => String(row.name));
+
+      const drawingTable = findSqliteTable(tables, ["Drawing", "drawings"]);
+      const collectionTable = findSqliteTable(tables, ["Collection", "collections"]);
+      if (!drawingTable) {
+        return res.status(400).json({ error: "Invalid legacy DB", message: "Missing Drawing table" });
+      }
+
+      const drawingsCount = Number(
+        db.prepare(`SELECT COUNT(1) as c FROM "${drawingTable}"`).get()?.c ?? 0
+      );
+      const collectionsCount = collectionTable
+        ? Number(db.prepare(`SELECT COUNT(1) as c FROM "${collectionTable}"`).get()?.c ?? 0)
+        : 0;
+
+      let latestMigration: string | null = null;
+      const migrationsTable = findSqliteTable(tables, ["_prisma_migrations"]);
+      if (migrationsTable) {
+        try {
+          const row = db
+            .prepare(
+              `SELECT migration_name as name, finished_at as finishedAt FROM "${migrationsTable}" ORDER BY finished_at DESC LIMIT 1`
+            )
+            .get();
+          if (row?.name) latestMigration = String(row.name);
+        } catch {
+          latestMigration = null;
+        }
+      }
+
+      res.json({
+        valid: true,
+        drawings: drawingsCount,
+        collections: collectionsCount,
+        latestMigration,
+        currentLatestMigration: await getCurrentLatestPrismaMigrationName(),
+      });
+    } finally {
+      try {
+        db.close();
+      } catch { }
+    }
+  } finally {
+    await removeFileIfExists(stagedPath);
+  }
+}));
+
+app.post("/import/sqlite/legacy", requireAuth, upload.single("db"), asyncHandler(async (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  if (!req.file) {
+    return res.status(400).json({ error: "No file uploaded" });
+  }
+
+  const stagedPath = req.file.path;
+  try {
+    const isValid = await verifyDatabaseIntegrityAsync(stagedPath);
+    if (!isValid) {
+      return res.status(400).json({ error: "Invalid database format" });
+    }
+
+    let Database: any;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      Database = require("better-sqlite3") as any;
+    } catch (error) {
+      return res.status(500).json({
+        error: "Legacy DB support unavailable",
+        message:
+          "Failed to load better-sqlite3. Run `cd backend && npm rebuild better-sqlite3` (or reinstall dependencies) and try again.",
+      });
+    }
+    const legacyDb = new Database(stagedPath, { readonly: true, fileMustExist: true });
+    try {
+      const tables: string[] = legacyDb
+        .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+        .all()
+        .map((row: any) => String(row.name));
+
+      const drawingTable = findSqliteTable(tables, ["Drawing", "drawings"]);
+      const collectionTable = findSqliteTable(tables, ["Collection", "collections"]);
+
+      if (!drawingTable) {
+        return res.status(400).json({ error: "Invalid legacy DB", message: "Missing Drawing table" });
+      }
+
+      const importedCollections: any[] = collectionTable
+        ? legacyDb.prepare(`SELECT * FROM "${collectionTable}"`).all()
+        : [];
+      const importedDrawings: any[] = legacyDb.prepare(`SELECT * FROM "${drawingTable}"`).all();
+
+      const hasTrash = importedDrawings.some((d) => String(d.collectionId || "") === "trash");
+      if (hasTrash) {
+        await ensureTrashCollection(req.user.id);
+      }
+
+      const collectionIdMap = new Map<string, string>();
+      let collectionsCreated = 0;
+      let collectionsUpdated = 0;
+      let collectionIdConflicts = 0;
+
+      for (const c of importedCollections) {
+        const importedId = typeof c.id === "string" ? c.id : null;
+        const name = typeof c.name === "string" ? c.name : "Collection";
+
+        if (importedId === "trash" || name === "Trash") {
+          collectionIdMap.set(importedId || "trash", "trash");
+          continue;
+        }
+
+        if (!importedId) {
+          const newId = uuidv4();
+          await prisma.collection.create({
+            data: { id: newId, name: sanitizeText(name, 100) || "Collection", userId: req.user.id },
+          });
+          collectionIdMap.set(`__name:${name}`, newId);
+          collectionsCreated += 1;
+          continue;
+        }
+
+        const existing = await prisma.collection.findUnique({ where: { id: importedId } });
+        if (!existing) {
+          await prisma.collection.create({
+            data: { id: importedId, name: sanitizeText(name, 100) || "Collection", userId: req.user.id },
+          });
+          collectionIdMap.set(importedId, importedId);
+          collectionsCreated += 1;
+          continue;
+        }
+
+        if (existing.userId === req.user.id) {
+          await prisma.collection.update({
+            where: { id: importedId },
+            data: { name: sanitizeText(name, 100) || "Collection" },
+          });
+          collectionIdMap.set(importedId, importedId);
+          collectionsUpdated += 1;
+          continue;
+        }
+
+        const newId = uuidv4();
+        await prisma.collection.create({
+          data: { id: newId, name: sanitizeText(name, 100) || "Collection", userId: req.user.id },
+        });
+        collectionIdMap.set(importedId, newId);
+        collectionsCreated += 1;
+        collectionIdConflicts += 1;
+      }
+
+      const resolveImportedCollectionId = (rawCollectionId: unknown, rawCollectionName: unknown): string | null => {
+        const id = typeof rawCollectionId === "string" ? rawCollectionId : null;
+        const name = typeof rawCollectionName === "string" ? rawCollectionName : null;
+
+        if (id === "trash" || name === "Trash") return "trash";
+        if (id && collectionIdMap.has(id)) return collectionIdMap.get(id)!;
+        if (name && collectionIdMap.has(`__name:${name}`)) return collectionIdMap.get(`__name:${name}`)!;
+        return null;
+      };
+
+      let drawingsCreated = 0;
+      let drawingsUpdated = 0;
+      let drawingIdConflicts = 0;
+
+      for (const d of importedDrawings) {
+        const importedId = typeof d.id === "string" ? d.id : null;
+
+        const elements = parseOptionalJson<unknown[]>(d.elements, []);
+        const appState = parseOptionalJson<Record<string, unknown>>(d.appState, {});
+        const files = parseOptionalJson<Record<string, unknown>>(d.files, {});
+        const preview = typeof d.preview === "string" ? d.preview : null;
+
+        const importPayload = {
+          name: typeof d.name === "string" ? d.name : "Untitled Drawing",
+          elements,
+          appState,
+          files,
+          preview,
+          collectionId: resolveImportedCollectionId(d.collectionId, d.collectionName),
+        };
+
+        if (!validateImportedDrawing(importPayload)) {
+          return res.status(400).json({
+            error: "Invalid imported drawing",
+            message: "Legacy database contains invalid drawing data",
+          });
+        }
+
+        const sanitized = sanitizeDrawingData(importPayload);
+        const drawingName = sanitizeText(importPayload.name, 255) || "Untitled Drawing";
+
+        const existing = importedId ? await prisma.drawing.findUnique({ where: { id: importedId } }) : null;
+
+        if (!existing) {
+          const idToUse = importedId || uuidv4();
+          await prisma.drawing.create({
+            data: {
+              id: idToUse,
+              name: drawingName,
+              elements: JSON.stringify(sanitized.elements),
+              appState: JSON.stringify(sanitized.appState),
+              files: JSON.stringify(sanitized.files || {}),
+              preview: sanitized.preview ?? null,
+              version: Number.isFinite(Number(d.version)) ? Number(d.version) : 1,
+              userId: req.user.id,
+              collectionId: importPayload.collectionId ?? null,
+            },
+          });
+          drawingsCreated += 1;
+          continue;
+        }
+
+        if (existing.userId === req.user.id) {
+          await prisma.drawing.update({
+            where: { id: existing.id },
+            data: {
+              name: drawingName,
+              elements: JSON.stringify(sanitized.elements),
+              appState: JSON.stringify(sanitized.appState),
+              files: JSON.stringify(sanitized.files || {}),
+              preview: sanitized.preview ?? null,
+              version: Number.isFinite(Number(d.version)) ? Number(d.version) : existing.version,
+              collectionId: importPayload.collectionId ?? null,
+            },
+          });
+          drawingsUpdated += 1;
+          continue;
+        }
+
+        const newId = uuidv4();
+        await prisma.drawing.create({
+          data: {
+            id: newId,
+            name: drawingName,
+            elements: JSON.stringify(sanitized.elements),
+            appState: JSON.stringify(sanitized.appState),
+            files: JSON.stringify(sanitized.files || {}),
+            preview: sanitized.preview ?? null,
+            version: Number.isFinite(Number(d.version)) ? Number(d.version) : 1,
+            userId: req.user.id,
+            collectionId: importPayload.collectionId ?? null,
+          },
+        });
+        drawingsCreated += 1;
+        drawingIdConflicts += 1;
+      }
+
+      invalidateDrawingsCache();
+
+      res.json({
+        success: true,
+        collections: { created: collectionsCreated, updated: collectionsUpdated, idConflicts: collectionIdConflicts },
+        drawings: { created: drawingsCreated, updated: drawingsUpdated, idConflicts: drawingIdConflicts },
+      });
+    } finally {
+      try {
+        legacyDb.close();
+      } catch { }
+    }
+  } finally {
+    await removeFileIfExists(stagedPath);
+  }
 }));
 
 // Error handler middleware (must be last)

@@ -674,12 +674,12 @@ export const Dashboard: React.FC = () => {
         </DragOverlayPortal>
       )}
 
-      <h1 className="text-5xl mb-8 text-slate-900 dark:text-white pl-1" style={{ fontFamily: 'Excalifont' }}>
+      <h1 className="text-3xl sm:text-5xl mb-6 sm:mb-8 text-slate-900 dark:text-white pl-1" style={{ fontFamily: 'Excalifont' }}>
         {viewTitle}
       </h1>
 
       <div className="mb-8 flex flex-col xl:flex-row items-center justify-between gap-4">
-        <div className="flex flex-1 w-full gap-3 items-center">
+        <div className="flex flex-1 w-full gap-3 items-center flex-wrap">
           <div className="relative flex-1 group max-w-md transition-all duration-200 focus-within:-translate-y-0.5">
             <input
               ref={searchInputRef}
@@ -696,7 +696,7 @@ export const Dashboard: React.FC = () => {
               </kbd>
             </div>
           </div>
-          <div className="flex items-center gap-2 p-1">
+          <div className="flex items-center gap-2 p-1 flex-wrap">
             <div className="relative">
               <button
                 onClick={(e) => {
@@ -704,7 +704,7 @@ export const Dashboard: React.FC = () => {
                   setShowSortMenu(!showSortMenu);
                 }}
                 className={clsx(
-                  "flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold transition-all border-2 border-black dark:border-neutral-700 whitespace-nowrap h-[42px] w-[180px]",
+                  "flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold transition-all border-2 border-black dark:border-neutral-700 whitespace-nowrap h-[42px] w-full sm:w-[180px]",
                   "bg-white dark:bg-neutral-900 text-slate-700 dark:text-neutral-300 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-0.5 hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
                 )}
               >
@@ -914,11 +914,12 @@ export const Dashboard: React.FC = () => {
       >
         {isDraggingFile && (
           <div className="absolute inset-0 z-50 bg-white/80 backdrop-blur-sm border-4 border-dashed border-indigo-400 rounded-3xl flex flex-col items-center justify-center animate-in fade-in duration-200">
-            <div className="bg-indigo-50 p-8 rounded-full mb-6 shadow-sm">
-              <Inbox size={64} className="text-indigo-600" />
+            <div className="bg-indigo-50 p-6 sm:p-8 rounded-full mb-5 sm:mb-6 shadow-sm">
+              <Inbox size={56} className="text-indigo-600 hidden sm:block" />
+              <Inbox size={44} className="text-indigo-600 sm:hidden" />
             </div>
-            <h3 className="text-3xl font-bold text-slate-800 mb-2">Drop files to import</h3>
-            <p className="text-slate-500 text-lg max-w-md text-center">
+            <h3 className="text-2xl sm:text-3xl font-bold text-slate-800 mb-2 text-center px-4">Drop files to import</h3>
+            <p className="text-slate-500 text-base sm:text-lg max-w-sm sm:max-w-md text-center px-4">
               Drop .excalidraw or .json files here to add them to
               <span className="font-bold text-indigo-600 mx-1">
                 {viewTitle}
@@ -932,9 +933,9 @@ export const Dashboard: React.FC = () => {
             <Loader2 size={32} className="animate-spin" />
           </div>
         ) : (
-          <div className={clsx("grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 pb-24 transition-all duration-300", isDraggingFile && "opacity-20 blur-sm")}>
+          <div className={clsx("grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6 pb-16 sm:pb-24 transition-all duration-300", isDraggingFile && "opacity-20 blur-sm")}>
             {sortedDrawings.length === 0 ? (
-              <div className="col-span-full flex flex-col items-center justify-center py-32 text-slate-400 dark:text-neutral-500 border-2 border-dashed border-slate-200 dark:border-neutral-700 rounded-3xl bg-slate-50/50 dark:bg-neutral-800/50">
+              <div className="col-span-full flex flex-col items-center justify-center py-16 sm:py-32 text-slate-400 dark:text-neutral-500 border-2 border-dashed border-slate-200 dark:border-neutral-700 rounded-3xl bg-slate-50/50 dark:bg-neutral-800/50">
                 <div className="w-20 h-20 bg-white dark:bg-slate-800 rounded-full shadow-sm border border-slate-100 dark:border-slate-700 flex items-center justify-center mb-6">
                   {isTrashView ? <Trash2 size={32} className="text-slate-300 dark:text-slate-600" /> : <Inbox size={32} className="text-slate-300 dark:text-slate-600" />}
                 </div>

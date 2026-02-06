@@ -1,15 +1,22 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Logo } from '../components/Logo';
+import * as api from '../api';
+import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY, USER_KEY } from '../utils/impersonation';
 
 export const Login: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login, authEnabled, bootstrapRequired, isAuthenticated, loading: authLoading } = useAuth();
+  const { login, logout, authEnabled, bootstrapRequired, isAuthenticated, loading: authLoading, user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const queryMustReset = searchParams.get('mustReset') === '1';
+  const mustReset = Boolean(user?.mustResetPassword) || queryMustReset;
 
   useEffect(() => {
     if (authLoading || authEnabled === null) return;
@@ -22,9 +29,10 @@ export const Login: React.FC = () => {
       return;
     }
     if (isAuthenticated) {
+      if (mustReset) return;
       navigate('/', { replace: true });
     }
-  }, [authEnabled, authLoading, bootstrapRequired, isAuthenticated, navigate]);
+  }, [authEnabled, authLoading, bootstrapRequired, isAuthenticated, mustReset, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,9 +41,56 @@ export const Login: React.FC = () => {
 
     try {
       await login(email, password);
+      const stored = localStorage.getItem(USER_KEY);
+      const storedUser = stored ? (JSON.parse(stored) as { mustResetPassword?: boolean } | null) : null;
+      if (storedUser?.mustResetPassword) {
+        setPassword('');
+        return;
+      }
       navigate('/');
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to login';
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleMustReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+
+    if (!newPassword || !confirmNewPassword) {
+      setError('Please enter and confirm a new password');
+      return;
+    }
+    if (newPassword.length < 8) {
+      setError('New password must be at least 8 characters long');
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setError('New passwords do not match');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await api.api.post<{
+        user: { id: string; email: string; name: string; role?: string; mustResetPassword?: boolean };
+        accessToken: string;
+        refreshToken: string;
+      }>('/auth/must-reset-password', { newPassword });
+
+      localStorage.setItem(ACCESS_TOKEN_KEY, response.data.accessToken);
+      localStorage.setItem(REFRESH_TOKEN_KEY, response.data.refreshToken);
+      localStorage.setItem(USER_KEY, JSON.stringify(response.data.user));
+
+      window.location.href = '/';
+    } catch (err: unknown) {
+      let message = 'Failed to reset password';
+      if (api.isAxiosError(err)) {
+        message = err.response?.data?.message || err.response?.data?.error || message;
+      }
       setError(message);
     } finally {
       setLoading(false);
@@ -48,67 +103,116 @@ export const Login: React.FC = () => {
         <div className="text-center">
           <Logo className="mx-auto h-12 w-auto" />
           <h2 className="mt-6 text-3xl font-extrabold text-gray-900 dark:text-white">
-            Sign in to your account
+            {mustReset ? 'Reset your password' : 'Sign in to your account'}
           </h2>
-          <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-            Or{' '}
-            <Link
-              to="/register"
-              className="font-medium text-blue-600 hover:text-blue-500 dark:text-blue-400"
-            >
-              create a new account
-            </Link>
-          </p>
+          {!mustReset ? (
+            <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+              Or{' '}
+              <Link
+                to="/register"
+                className="font-medium text-blue-600 hover:text-blue-500 dark:text-blue-400"
+              >
+                create a new account
+              </Link>
+            </p>
+          ) : (
+            <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+              Your admin requires you to set a new password before using ExcaliDash.
+            </p>
+          )}
         </div>
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+        <form className="mt-8 space-y-6" onSubmit={mustReset ? handleMustReset : handleSubmit}>
           {error && (
             <div className="rounded-md bg-red-50 dark:bg-red-900/20 p-4">
               <div className="text-sm text-red-800 dark:text-red-200">{error}</div>
             </div>
           )}
           <div className="rounded-md shadow-sm -space-y-px">
-            <div>
-              <label htmlFor="email" className="sr-only">
-                Email address
-              </label>
-              <input
-                id="email"
-                name="email"
-                type="email"
-                autoComplete="email"
-                required
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
-                placeholder="Email address"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
-            </div>
-            <div>
-              <label htmlFor="password" className="sr-only">
-                Password
-              </label>
-              <input
-                id="password"
-                name="password"
-                type="password"
-                autoComplete="current-password"
-                required
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
-                placeholder="Password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </div>
+            {!mustReset ? (
+              <>
+                <div>
+                  <label htmlFor="email" className="sr-only">
+                    Email address
+                  </label>
+                  <input
+                    id="email"
+                    name="email"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                    placeholder="Email address"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="password" className="sr-only">
+                    Password
+                  </label>
+                  <input
+                    id="password"
+                    name="password"
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                    className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                    placeholder="Password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <label htmlFor="newPassword" className="sr-only">
+                    New password
+                  </label>
+                  <input
+                    id="newPassword"
+                    name="newPassword"
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    minLength={8}
+                    className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                    placeholder="New password (min 8 characters)"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="confirmNewPassword" className="sr-only">
+                    Confirm new password
+                  </label>
+                  <input
+                    id="confirmNewPassword"
+                    name="confirmNewPassword"
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    minLength={8}
+                    className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                    placeholder="Confirm new password"
+                    value={confirmNewPassword}
+                    onChange={(e) => setConfirmNewPassword(e.target.value)}
+                  />
+                </div>
+              </>
+            )}
           </div>
 
-          <div className="flex justify-end">
-            <Link
-              to="/reset-password"
-              className="text-sm font-medium text-blue-600 hover:text-blue-500 dark:text-blue-400"
-            >
-              Forgot your password?
-            </Link>
-          </div>
+          {!mustReset && (
+            <div className="flex justify-end">
+              <Link
+                to="/reset-password"
+                className="text-sm font-medium text-blue-600 hover:text-blue-500 dark:text-blue-400"
+              >
+                Forgot your password?
+              </Link>
+            </div>
+          )}
 
           <div>
             <button
@@ -116,9 +220,25 @@ export const Login: React.FC = () => {
               disabled={loading}
               className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? 'Signing in...' : 'Sign in'}
+              {mustReset ? (loading ? 'Updating...' : 'Set new password') : (loading ? 'Signing in...' : 'Sign in')}
             </button>
           </div>
+
+          {mustReset && (
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setNewPassword('');
+                  setConfirmNewPassword('');
+                  logout();
+                }}
+                className="text-sm font-medium text-blue-600 hover:text-blue-500 dark:text-blue-400"
+              >
+                Sign in as a different user
+              </button>
+            </div>
+          )}
         </form>
       </div>
     </div>

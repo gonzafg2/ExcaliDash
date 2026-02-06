@@ -5,11 +5,13 @@ import { useAuth } from '../context/AuthContext';
 import * as api from '../api';
 import type { Collection } from '../types';
 import { User, Lock, Save, X, Shield } from 'lucide-react';
+import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY, USER_KEY } from '../utils/impersonation';
 
 export const Profile: React.FC = () => {
     const { user: authUser, logout, authEnabled } = useAuth();
     const navigate = useNavigate();
     const isAdmin = authUser?.role === 'ADMIN';
+    const mustResetPassword = Boolean(authUser?.mustResetPassword);
     const [collections, setCollections] = useState<Collection[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
@@ -20,6 +22,9 @@ export const Profile: React.FC = () => {
     // User info state
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
+    const [showEmailForm, setShowEmailForm] = useState(false);
+    const [emailCurrentPassword, setEmailCurrentPassword] = useState('');
+    const [emailLoading, setEmailLoading] = useState(false);
 
     // Password change state
     const [currentPassword, setCurrentPassword] = useState('');
@@ -55,6 +60,12 @@ export const Profile: React.FC = () => {
         };
         fetchData();
     }, [authEnabled, authUser, isAdmin, navigate]);
+
+    useEffect(() => {
+        if (mustResetPassword) {
+            setShowPasswordForm(true);
+        }
+    }, [mustResetPassword]);
 
     const handleToggleRegistration = async () => {
         if (!isAdmin || registrationEnabled === null) return;
@@ -107,6 +118,10 @@ export const Profile: React.FC = () => {
     };
 
     const handleUpdateName = async () => {
+        if (mustResetPassword) {
+            setError('You must reset your password before updating your profile');
+            return;
+        }
         if (!name.trim()) {
             setError('Name cannot be empty');
             return;
@@ -191,6 +206,58 @@ export const Profile: React.FC = () => {
         }
     };
 
+    const handleUpdateEmail = async () => {
+        if (mustResetPassword) {
+            setError('You must reset your password before changing your email');
+            return;
+        }
+        if (!email.trim()) {
+            setError('Email cannot be empty');
+            return;
+        }
+        if (!emailCurrentPassword) {
+            setError('Current password is required to change email');
+            return;
+        }
+
+        setEmailLoading(true);
+        setError('');
+        setSuccess('');
+
+        try {
+            const response = await api.api.put<{
+                user: { id: string; email: string; name: string; createdAt: string; updatedAt: string };
+                accessToken: string;
+                refreshToken: string;
+            }>('/auth/email', {
+                email: email.trim(),
+                currentPassword: emailCurrentPassword,
+            });
+
+            localStorage.setItem(ACCESS_TOKEN_KEY, response.data.accessToken);
+            localStorage.setItem(REFRESH_TOKEN_KEY, response.data.refreshToken);
+            localStorage.setItem(USER_KEY, JSON.stringify(response.data.user));
+
+            setSuccess('Email updated successfully');
+            setShowEmailForm(false);
+            setEmailCurrentPassword('');
+
+            setTimeout(() => window.location.reload(), 500);
+        } catch (err: unknown) {
+            let message = 'Failed to update email';
+            if (api.isAxiosError(err)) {
+                if (err.response?.data?.message) {
+                    message = err.response.data.message;
+                } else if (err.response?.data?.error) {
+                    message = err.response.data.error;
+                }
+            }
+            setError(message);
+        } finally {
+            setEmailLoading(false);
+        }
+    };
+
     return (
         <Layout
             collections={collections}
@@ -200,7 +267,7 @@ export const Profile: React.FC = () => {
             onEditCollection={handleEditCollection}
             onDeleteCollection={handleDeleteCollection}
         >
-            <h1 className="text-5xl mb-8 text-slate-900 dark:text-white pl-1" style={{ fontFamily: 'Excalifont' }}>
+            <h1 className="text-3xl sm:text-5xl mb-6 sm:mb-8 text-slate-900 dark:text-white pl-1" style={{ fontFamily: 'Excalifont' }}>
                 Profile
             </h1>
 
@@ -226,20 +293,95 @@ export const Profile: React.FC = () => {
                         <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Personal Information</h2>
                     </div>
 
-                    <div className="space-y-4">
-                        <div>
-                            <label htmlFor="email" className="block text-sm font-bold text-slate-700 dark:text-neutral-300 mb-2">
-                                Email Address
-                            </label>
-                            <input
-                                id="email"
-                                type="email"
-                                value={email}
-                                disabled
-                                className="w-full px-4 py-3 bg-slate-50 dark:bg-neutral-800 border-2 border-slate-200 dark:border-neutral-700 rounded-xl text-slate-600 dark:text-neutral-400 cursor-not-allowed"
-                            />
-                            <p className="mt-1 text-xs text-slate-500 dark:text-neutral-500">Email cannot be changed</p>
-                        </div>
+                            {mustResetPassword && (
+                                <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border-2 border-amber-200 dark:border-amber-800 rounded-xl">
+                                    <p className="text-amber-900 dark:text-amber-200 font-bold">
+                                        Password reset required
+                                    </p>
+                                    <p className="text-sm text-amber-800 dark:text-amber-200/80 font-medium mt-1">
+                                        Change your password below before using ExcaliDash.
+                                    </p>
+                                </div>
+                            )}
+		                    <div className="space-y-4">
+	                        <div>
+	                            <label htmlFor="email" className="block text-sm font-bold text-slate-700 dark:text-neutral-300 mb-2">
+	                                Email Address
+	                            </label>
+	                            <div className="flex gap-3">
+	                                <input
+	                                    id="email"
+	                                    type="email"
+	                                    value={email}
+	                                    onChange={(e) => setEmail(e.target.value)}
+	                                    disabled={!showEmailForm}
+	                                    className={
+	                                        showEmailForm
+	                                            ? "flex-1 px-4 py-3 bg-white dark:bg-neutral-800 border-2 border-black dark:border-neutral-700 rounded-xl text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:focus:ring-indigo-400 font-medium"
+	                                            : "flex-1 px-4 py-3 bg-slate-50 dark:bg-neutral-800 border-2 border-slate-200 dark:border-neutral-700 rounded-xl text-slate-600 dark:text-neutral-400 cursor-not-allowed"
+	                                    }
+	                                />
+		                                {!showEmailForm && (
+		                                    <button
+		                                        onClick={() => {
+		                                            setShowEmailForm(true);
+		                                            setEmailCurrentPassword('');
+		                                            setError('');
+		                                            setSuccess('');
+		                                        }}
+                                                disabled={mustResetPassword}
+		                                        className="px-6 py-3 bg-white dark:bg-neutral-800 text-slate-700 dark:text-neutral-300 font-bold rounded-xl border-2 border-black dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-0.5 transition-all duration-200"
+		                                    >
+		                                        Change
+		                                    </button>
+		                                )}
+	                            </div>
+
+	                            {showEmailForm && (
+	                                <div className="mt-4 space-y-3">
+	                                    <div>
+	                                        <label htmlFor="emailCurrentPassword" className="block text-sm font-bold text-slate-700 dark:text-neutral-300 mb-2">
+	                                            Current Password
+	                                        </label>
+	                                        <input
+	                                            id="emailCurrentPassword"
+	                                            type="password"
+	                                            value={emailCurrentPassword}
+	                                            onChange={(e) => setEmailCurrentPassword(e.target.value)}
+	                                            className="w-full px-4 py-3 bg-white dark:bg-neutral-800 border-2 border-black dark:border-neutral-700 rounded-xl text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:focus:ring-indigo-400 font-medium"
+	                                            placeholder="Enter current password"
+	                                        />
+	                                    </div>
+	                                    <div className="flex gap-3">
+	                                        <button
+	                                            onClick={handleUpdateEmail}
+	                                            disabled={
+	                                                emailLoading ||
+	                                                !email.trim() ||
+	                                                !emailCurrentPassword ||
+	                                                email.trim() === authUser?.email
+	                                            }
+	                                            className="flex-1 px-6 py-3 bg-indigo-600 dark:bg-indigo-500 text-white font-bold rounded-xl border-2 border-black dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-0.5 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+	                                        >
+	                                            {emailLoading ? 'Saving...' : 'Save Email'}
+	                                        </button>
+	                                        <button
+	                                            onClick={() => {
+	                                                setShowEmailForm(false);
+	                                                setEmail(authUser?.email || '');
+	                                                setEmailCurrentPassword('');
+	                                                setError('');
+	                                            }}
+	                                            disabled={emailLoading}
+	                                            className="px-6 py-3 bg-white dark:bg-neutral-800 text-slate-700 dark:text-neutral-300 font-bold rounded-xl border-2 border-black dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-0.5 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+	                                        >
+	                                            <X size={18} />
+	                                            Cancel
+	                                        </button>
+	                                    </div>
+	                                </div>
+	                            )}
+	                        </div>
 
                         <div>
                             <label htmlFor="name" className="block text-sm font-bold text-slate-700 dark:text-neutral-300 mb-2">
@@ -254,14 +396,14 @@ export const Profile: React.FC = () => {
                                     className="flex-1 px-4 py-3 bg-white dark:bg-neutral-800 border-2 border-black dark:border-neutral-700 rounded-xl text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:focus:ring-indigo-400 font-medium"
                                     placeholder="Your name"
                                 />
-                                <button
-                                    onClick={handleUpdateName}
-                                    disabled={loading || !name.trim() || name === authUser?.name}
-                                    className="px-6 py-3 bg-indigo-600 dark:bg-indigo-500 text-white font-bold rounded-xl border-2 border-black dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-0.5 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:disabled:hover:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] flex items-center gap-2"
-                                >
-                                    <Save size={18} />
-                                    Save
-                                </button>
+	                                <button
+	                                    onClick={handleUpdateName}
+	                                    disabled={mustResetPassword || loading || !name.trim() || name === authUser?.name}
+	                                    className="px-6 py-3 bg-indigo-600 dark:bg-indigo-500 text-white font-bold rounded-xl border-2 border-black dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-0.5 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:disabled:hover:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] flex items-center gap-2"
+	                                >
+	                                    <Save size={18} />
+	                                    Save
+	                                </button>
                             </div>
                         </div>
                     </div>
@@ -312,7 +454,7 @@ export const Profile: React.FC = () => {
                             </div>
                             <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Change Password</h2>
                         </div>
-                        {!showPasswordForm && (
+                        {!showPasswordForm && !mustResetPassword && (
                             <button
                                 onClick={() => setShowPasswordForm(true)}
                                 className="px-4 py-2 bg-rose-600 dark:bg-rose-500 text-white font-bold rounded-xl border-2 border-black dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-0.5 transition-all duration-200"
@@ -374,23 +516,25 @@ export const Profile: React.FC = () => {
                                 >
                                     {loading ? 'Changing...' : 'Change Password'}
                                 </button>
-                                <button
-                                    onClick={() => {
-                                        setShowPasswordForm(false);
-                                        setCurrentPassword('');
-                                        setNewPassword('');
-                                        setConfirmPassword('');
-                                        setError('');
-                                    }}
-                                    disabled={loading}
-                                    className="px-6 py-3 bg-white dark:bg-neutral-800 text-slate-700 dark:text-neutral-300 font-bold rounded-xl border-2 border-black dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-0.5 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                                >
-                                    <X size={18} />
-                                    Cancel
-                                </button>
-                            </div>
-                        </div>
-                    )}
+                                    {!mustResetPassword && (
+	                                    <button
+	                                        onClick={() => {
+	                                            setShowPasswordForm(false);
+	                                            setCurrentPassword('');
+	                                            setNewPassword('');
+	                                            setConfirmPassword('');
+	                                            setError('');
+	                                        }}
+	                                        disabled={loading}
+	                                        className="px-6 py-3 bg-white dark:bg-neutral-800 text-slate-700 dark:text-neutral-300 font-bold rounded-xl border-2 border-black dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-0.5 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+	                                    >
+	                                        <X size={18} />
+	                                        Cancel
+	                                    </button>
+                                    )}
+	                            </div>
+	                        </div>
+	                    )}
                 </div>
             </div>
         </Layout>

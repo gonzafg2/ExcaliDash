@@ -105,6 +105,24 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
+    // Handle must-reset-password enforcement (403)
+    if (
+      error.response?.status === 403 &&
+      error.response?.data?.code === "MUST_RESET_PASSWORD"
+    ) {
+      const url = String(error.config?.url || "");
+      const isAuthRoute =
+        url.startsWith("/auth/me") ||
+        url.startsWith("/auth/must-reset-password") ||
+        url.startsWith("/auth/login") ||
+        url.startsWith("/auth/register");
+
+      if (!isAuthRoute && window.location.pathname !== "/login") {
+        window.location.href = "/login?mustReset=1";
+      }
+      return Promise.reject(error);
+    }
+
     // Handle 401 Unauthorized (invalid/expired JWT)
     if (error.response?.status === 401) {
       const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);

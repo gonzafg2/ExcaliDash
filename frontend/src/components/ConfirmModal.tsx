@@ -5,7 +5,7 @@ import { AlertTriangle, CheckCircle, X } from 'lucide-react';
 interface ConfirmModalProps {
   isOpen: boolean;
   title: string;
-  message: string;
+  message: React.ReactNode;
   confirmText?: string;
   cancelText?: string;
   onConfirm: () => void;
@@ -60,9 +60,9 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
 
           <div className="space-y-2">
             <h3 className="text-xl font-bold text-neutral-900 dark:text-neutral-100 tracking-tight">{title}</h3>
-            <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400 leading-relaxed">
+            <div className="text-sm font-medium text-neutral-500 dark:text-neutral-400 leading-relaxed">
               {message}
-            </p>
+            </div>
           </div>
 
           <div className="flex gap-3 w-full mt-2">

@@ -89,6 +89,7 @@ declare global {
         name: string;
         role: string;
         mustResetPassword?: boolean;
+        impersonatorId?: string;
       };
     }
   }
@@ -98,6 +99,7 @@ interface JwtPayload {
   userId: string;
   email: string;
   type: "access" | "refresh";
+  impersonatorId?: string;
 }
 
 /**
@@ -108,10 +110,13 @@ const isJwtPayload = (decoded: unknown): decoded is JwtPayload => {
     return false;
   }
   const payload = decoded as Record<string, unknown>;
+  const impersonatorOk =
+    typeof payload.impersonatorId === "undefined" || typeof payload.impersonatorId === "string";
   return (
     typeof payload.userId === "string" &&
     typeof payload.email === "string" &&
-    (payload.type === "access" || payload.type === "refresh")
+    (payload.type === "access" || payload.type === "refresh") &&
+    impersonatorOk
   );
 };
 
@@ -146,6 +151,23 @@ const verifyToken = (token: string): JwtPayload | null => {
   } catch {
     return null;
   }
+};
+
+const normalizeRequestPath = (req: Request): string => {
+  const raw = (req.originalUrl || req.url || "").split("?")[0] || "";
+  // In some deployments the backend may see a /api prefix.
+  return raw.replace(/^\/api(?=\/)/, "");
+};
+
+const isAllowedWhileMustResetPassword = (req: Request): boolean => {
+  const path = normalizeRequestPath(req);
+
+  // Permit fetching current user and changing password.
+  if (req.method === "GET" && path === "/auth/me") return true;
+  if (req.method === "POST" && path === "/auth/change-password") return true;
+  if (req.method === "POST" && path === "/auth/must-reset-password") return true;
+
+  return false;
 };
 
 /**
@@ -224,6 +246,15 @@ export const requireAuth = async (
       return;
     }
 
+    if (user.mustResetPassword && !isAllowedWhileMustResetPassword(req)) {
+      res.status(403).json({
+        error: "Forbidden",
+        code: "MUST_RESET_PASSWORD",
+        message: "You must reset your password before using the app",
+      });
+      return;
+    }
+
     // Attach user to request
     req.user = {
       id: user.id,
@@ -232,6 +263,7 @@ export const requireAuth = async (
       name: user.name,
       role: user.role,
       mustResetPassword: user.mustResetPassword,
+      impersonatorId: payload.impersonatorId,
     };
 
     next();
@@ -297,6 +329,7 @@ export const optionalAuth = async (
         name: user.name,
         role: user.role,
         mustResetPassword: user.mustResetPassword,
+        impersonatorId: payload.impersonatorId,
       };
     }
   } catch (error) {

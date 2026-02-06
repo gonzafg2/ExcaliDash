@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LayoutGrid, Folder, Plus, Trash2, Edit2, Archive, FolderOpen, Settings as SettingsIcon, User, LogOut } from 'lucide-react';
+import { LayoutGrid, Folder, Plus, Trash2, Edit2, Archive, FolderOpen, Settings as SettingsIcon, User, LogOut, Shield } from 'lucide-react';
 import type { Collection } from '../types';
 import clsx from 'clsx';
 import { ConfirmModal } from './ConfirmModal';
 import { Logo } from './Logo';
 import { useAuth } from '../context/AuthContext';
+import { FingerprintAvatar } from './FingerprintAvatar';
+import { readImpersonationState, stopImpersonation as restoreImpersonation, type ImpersonationState } from '../utils/impersonation';
 
 interface SidebarProps {
   collections: Collection[];
@@ -123,6 +125,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const navigate = useNavigate();
   const { logout, user, authEnabled } = useAuth();
+  const isAdmin = user?.role === 'ADMIN';
+  const [impersonation, setImpersonation] = useState<ImpersonationState | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -136,6 +140,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    if (!authEnabled) {
+      setImpersonation(null);
+      return;
+    }
+    const sync = () => setImpersonation(readImpersonationState());
+    sync();
+    window.addEventListener('storage', sync);
+    return () => window.removeEventListener('storage', sync);
+  }, [authEnabled]);
 
 
   const handleCreateSubmit = (e: React.FormEvent) => {
@@ -169,7 +184,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <>
       <div className="w-full flex flex-col h-full bg-transparent">
-        <div className="p-5 pb-2">
+        <div className="p-4 sm:p-5 pb-2">
           <h1 className="text-2xl text-slate-900 dark:text-white flex items-center gap-3 tracking-tight" style={{ fontFamily: 'Excalifont' }}>
             <Logo className="w-10 h-10" />
             <span className="mt-1">ExcaliDash</span>
@@ -178,7 +193,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         <nav
-          className="flex-1 overflow-y-auto py-4 space-y-8 custom-scrollbar"
+          className="flex-1 overflow-y-auto py-3 sm:py-4 space-y-4 sm:space-y-8 custom-scrollbar"
           onContextMenu={handleBackgroundContextMenu}
         >
           <div className="space-y-1">
@@ -260,7 +275,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </nav>
 
-        <div className="px-3 pt-4 pb-4 border-t border-slate-200/50 dark:border-slate-700/50 space-y-2">
+        <div className="px-3 pt-3 sm:pt-4 pb-3 sm:pb-4 border-t border-slate-200/50 dark:border-slate-700/50 space-y-2">
           <button
             onDragOver={(e) => {
               e.preventDefault();
@@ -301,6 +316,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
           )}
 
+          {authEnabled && isAdmin && (
+            <button
+              onClick={() => navigate('/admin')}
+              className={clsx(
+                "w-full flex items-center gap-3 px-3 py-2 text-sm font-bold rounded-xl transition-all duration-200 border-2 border-black dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)]",
+                selectedCollectionId === 'ADMIN'
+                  ? "bg-indigo-50 dark:bg-neutral-800 text-indigo-900 dark:text-neutral-200 -translate-y-0.5"
+                  : "bg-white dark:bg-neutral-900 text-slate-900 dark:text-neutral-200 hover:bg-slate-50 dark:hover:bg-neutral-800 hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-0.5"
+              )}
+            >
+              <Shield size={18} />
+              <span className="min-w-0 flex-1 text-left">Admin</span>
+            </button>
+          )}
+
           <button
             onClick={() => navigate('/settings')}
             className={clsx(
@@ -317,10 +347,42 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {/* User info and logout */}
           {authEnabled && (
             <div className="mt-auto pt-4 border-t-2 border-slate-200 dark:border-neutral-700">
+            {impersonation && (
+              <div className="px-3 pb-2">
+                <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border-2 border-amber-200 dark:border-amber-800 rounded-xl flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-bold text-amber-900 dark:text-amber-200 uppercase tracking-wide">
+                      Impersonating
+                    </div>
+                    <div className="text-xs font-semibold text-amber-900 dark:text-amber-200 truncate">
+                      {user?.email}
+                    </div>
+                    <div className="text-[11px] text-amber-800/80 dark:text-amber-200/70 truncate">
+                      Return to {impersonation.impersonator.email}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (!restoreImpersonation()) return;
+                      window.location.reload();
+                    }}
+                    className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border-2 border-amber-300 dark:border-amber-700 bg-white dark:bg-neutral-900 text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-all flex-shrink-0"
+                  >
+                    Stop
+                  </button>
+                </div>
+              </div>
+            )}
             {user && (
               <div className="px-3 py-2 text-xs text-slate-500 dark:text-neutral-500 mb-2">
-                <div className="font-semibold text-slate-700 dark:text-neutral-300">{user.name}</div>
-                <div className="truncate">{user.email}</div>
+                <div className="flex items-center gap-3">
+                  <FingerprintAvatar size={28} className="flex-shrink-0 sm:hidden" title="Browser profile" />
+                  <FingerprintAvatar size={32} className="flex-shrink-0 hidden sm:block" title="Browser profile" />
+                  <div className="min-w-0">
+                    <div className="font-semibold text-slate-700 dark:text-neutral-300 truncate leading-tight">{user.name}</div>
+                    <div className="truncate leading-tight">{user.email}</div>
+                  </div>
+                </div>
               </div>
             )}
             <button

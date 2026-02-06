@@ -10,7 +10,7 @@ import { PrismaClient } from "./generated/client";
 import { config } from "./config";
 import { requireAuth, optionalAuth } from "./middleware/auth";
 import { sanitizeText } from "./security";
-import rateLimit from "express-rate-limit";
+import rateLimit, { MemoryStore } from "express-rate-limit";
 import { logAuditEvent } from "./utils/audit";
 import crypto from "crypto";
 
@@ -18,6 +18,7 @@ interface JwtPayload {
   userId: string;
   email: string;
   type: "access" | "refresh";
+  impersonatorId?: string;
 }
 
 /**
@@ -49,6 +50,9 @@ const ensureSystemConfig = async () => {
       id: DEFAULT_SYSTEM_CONFIG_ID,
       authEnabled: false,
       registrationEnabled: false,
+      authLoginRateLimitEnabled: true,
+      authLoginRateLimitWindowMs: 15 * 60 * 1000,
+      authLoginRateLimitMax: 20,
     },
   });
 };
@@ -65,13 +69,99 @@ const ensureAuthEnabled = async (res: Response): Promise<boolean> => {
   return true;
 };
 
-// Rate limiting for auth endpoints (stricter than general rate limiting)
-const authRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // 5 requests per window
+type LoginRateLimitConfig = {
+  enabled: boolean;
+  windowMs: number;
+  max: number;
+};
+
+const DEFAULT_LOGIN_RATE_LIMIT: LoginRateLimitConfig = {
+  enabled: true,
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+};
+
+let loginRateLimitConfig: LoginRateLimitConfig = { ...DEFAULT_LOGIN_RATE_LIMIT };
+let loginAttemptLimiter: ReturnType<typeof rateLimit> | null = null;
+let loginLimiterInitPromise: Promise<void> | null = null;
+
+const parseLoginRateLimitConfig = (systemConfig: Awaited<ReturnType<typeof ensureSystemConfig>>): LoginRateLimitConfig => {
+  const enabled = typeof systemConfig.authLoginRateLimitEnabled === "boolean" ? systemConfig.authLoginRateLimitEnabled : DEFAULT_LOGIN_RATE_LIMIT.enabled;
+  const windowMs =
+    Number.isFinite(Number(systemConfig.authLoginRateLimitWindowMs)) && Number(systemConfig.authLoginRateLimitWindowMs) > 0
+      ? Number(systemConfig.authLoginRateLimitWindowMs)
+      : DEFAULT_LOGIN_RATE_LIMIT.windowMs;
+  const max =
+    Number.isFinite(Number(systemConfig.authLoginRateLimitMax)) && Number(systemConfig.authLoginRateLimitMax) > 0
+      ? Number(systemConfig.authLoginRateLimitMax)
+      : DEFAULT_LOGIN_RATE_LIMIT.max;
+  return { enabled, windowMs, max };
+};
+
+const resolveAuthIdentifier = (req: Request): string | null => {
+  const body = (req.body || {}) as Record<string, unknown>;
+  const raw =
+    (typeof body.email === "string" && body.email) ||
+    (typeof body.username === "string" && body.username) ||
+    (typeof body.identifier === "string" && body.identifier) ||
+    null;
+  if (!raw) return null;
+  const trimmed = raw.trim().toLowerCase();
+  return trimmed.length > 0 ? trimmed.slice(0, 255) : null;
+};
+
+const buildLoginAttemptLimiter = (cfg: LoginRateLimitConfig) => {
+  const store = new MemoryStore();
+  const limiter = rateLimit({
+    windowMs: cfg.windowMs,
+    max: cfg.max,
+    message: {
+      error: "Too many requests",
+      message: "Too many login attempts, please try again later",
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+    store,
+    keyGenerator: (req) => {
+      const identifier = resolveAuthIdentifier(req as Request);
+      if (identifier) return `login:${identifier}`;
+      const ip = (req as Request).ip || "unknown";
+      return `login-ip:${ip}`;
+    },
+  });
+
+  loginAttemptLimiter = limiter;
+};
+
+const initLoginAttemptLimiter = async () => {
+  const systemConfig = await ensureSystemConfig();
+  loginRateLimitConfig = parseLoginRateLimitConfig(systemConfig);
+  buildLoginAttemptLimiter(loginRateLimitConfig);
+};
+
+const ensureLoginAttemptLimiter = async () => {
+  if (loginAttemptLimiter) return;
+  if (!loginLimiterInitPromise) {
+    loginLimiterInitPromise = initLoginAttemptLimiter().finally(() => {
+      loginLimiterInitPromise = null;
+    });
+  }
+  await loginLimiterInitPromise;
+};
+
+const loginAttemptRateLimiter = async (req: Request, res: Response, next: express.NextFunction) => {
+  await ensureLoginAttemptLimiter();
+  if (!loginRateLimitConfig.enabled) return next();
+  return (loginAttemptLimiter as ReturnType<typeof rateLimit>)(req, res, next);
+};
+
+// Rate limiting for authenticated account/admin actions (more lenient)
+const accountActionRateLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 60,
   message: {
     error: "Too many requests",
-    message: "Too many authentication attempts, please try again later",
+    message: "Too many requests, please try again later",
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -109,6 +199,49 @@ const authEnabledToggleSchema = z.object({
   enabled: z.boolean(),
 });
 
+const adminCreateUserSchema = z.object({
+  username: z.string().trim().min(3).max(50).optional(),
+  email: z.string().email().toLowerCase().trim(),
+  password: z.string().min(8).max(100),
+  name: z.string().trim().min(1).max(100),
+  role: z.enum(["ADMIN", "USER"]).optional(),
+  mustResetPassword: z.boolean().optional(),
+  isActive: z.boolean().optional(),
+});
+
+const adminUpdateUserSchema = z.object({
+  username: z.string().trim().min(3).max(50).nullable().optional(),
+  name: z.string().trim().min(1).max(100).optional(),
+  role: z.enum(["ADMIN", "USER"]).optional(),
+  mustResetPassword: z.boolean().optional(),
+  isActive: z.boolean().optional(),
+});
+
+const impersonateSchema = z
+  .object({
+    userId: z.string().trim().min(1).optional(),
+    identifier: z.string().trim().min(1).optional(),
+  })
+  .refine((data) => Boolean(data.userId || data.identifier), {
+    message: "userId/identifier is required",
+  });
+
+const loginRateLimitUpdateSchema = z.object({
+  enabled: z.boolean(),
+  windowMs: z.number().int().min(10_000).max(24 * 60 * 60 * 1000),
+  max: z.number().int().min(1).max(10_000),
+});
+
+const loginRateLimitResetSchema = z.object({
+  identifier: z.string().trim().min(1).max(255),
+});
+
+const generateTempPassword = (): string => {
+  // 24 chars base64-ish
+  const buf = crypto.randomBytes(18);
+  return buf.toString("base64").replace(/[+/=]/g, "").slice(0, 24);
+};
+
 const findUserByIdentifier = async (identifier: string) => {
   const trimmed = identifier.trim();
   if (trimmed.length === 0) return null;
@@ -127,18 +260,43 @@ const findUserByIdentifier = async (identifier: string) => {
   });
 };
 
+const requireAdmin = (
+  req: Request,
+  res: Response
+): req is Request & { user: NonNullable<Request["user"]> } => {
+  if (!req.user) {
+    res.status(401).json({ error: "Unauthorized", message: "User not authenticated" });
+    return false;
+  }
+  if (req.user.role !== "ADMIN") {
+    res.status(403).json({ error: "Forbidden", message: "Admin access required" });
+    return false;
+  }
+  return true;
+};
+
+const countActiveAdmins = async () => {
+  return prisma.user.count({
+    where: { role: "ADMIN", isActive: true },
+  });
+};
+
 /**
  * Generate JWT tokens (access and refresh)
  * Note: expiresIn accepts string (like "15m", "7d") or number (seconds)
  */
-const generateTokens = (userId: string, email: string) => {
+const generateTokens = (
+  userId: string,
+  email: string,
+  options?: { impersonatorId?: string }
+) => {
   // jwt.sign accepts StringValue | number for expiresIn
   // Our config provides strings which are compatible with StringValue
   const signOptions: SignOptions = {
     expiresIn: config.jwtAccessExpiresIn as StringValue,
   };
   const accessToken = jwt.sign(
-    { userId, email, type: "access" },
+    { userId, email, type: "access", impersonatorId: options?.impersonatorId },
     config.jwtSecret,
     signOptions
   );
@@ -147,7 +305,7 @@ const generateTokens = (userId: string, email: string) => {
     expiresIn: config.jwtRefreshExpiresIn as StringValue,
   };
   const refreshToken = jwt.sign(
-    { userId, email, type: "refresh" },
+    { userId, email, type: "refresh", impersonatorId: options?.impersonatorId },
     config.jwtSecret,
     refreshSignOptions
   );
@@ -168,7 +326,7 @@ const getRefreshTokenExpiresAt = (): Date =>
  * POST /auth/register
  * Register a new user
  */
-router.post("/register", authRateLimiter, async (req: Request, res: Response) => {
+router.post("/register", loginAttemptRateLimiter, async (req: Request, res: Response) => {
   try {
     if (!(await ensureAuthEnabled(res))) return;
     const parsed = registerSchema.safeParse(req.body);
@@ -399,7 +557,7 @@ router.post("/register", authRateLimiter, async (req: Request, res: Response) =>
  * POST /auth/login
  * Login with email and password
  */
-router.post("/login", authRateLimiter, async (req: Request, res: Response) => {
+router.post("/login", loginAttemptRateLimiter, async (req: Request, res: Response) => {
   try {
     if (!(await ensureAuthEnabled(res))) return;
     const parsed = loginSchema.safeParse(req.body);
@@ -604,7 +762,11 @@ router.post("/refresh", async (req: Request, res: Response) => {
           });
 
           // Generate new tokens (rotation)
-          const { accessToken, refreshToken: newRefreshToken } = generateTokens(user.id, user.email);
+          const { accessToken, refreshToken: newRefreshToken } = generateTokens(
+            user.id,
+            user.email,
+            { impersonatorId: decoded.impersonatorId }
+          );
 
           // Store new refresh token
           const expiresAt = getRefreshTokenExpiresAt();
@@ -635,7 +797,12 @@ router.post("/refresh", async (req: Request, res: Response) => {
         expiresIn: config.jwtAccessExpiresIn as StringValue,
       };
       const accessToken = jwt.sign(
-        { userId: user.id, email: user.email, type: "access" },
+        {
+          userId: user.id,
+          email: user.email,
+          type: "access",
+          impersonatorId: decoded.impersonatorId,
+        },
         config.jwtSecret,
         signOptions
       );
@@ -741,6 +908,7 @@ router.get("/status", optionalAuth, async (req: Request, res: Response) => {
             name: req.user.name,
             role: req.user.role,
             mustResetPassword: req.user.mustResetPassword ?? false,
+            impersonatorId: req.user.impersonatorId,
           }
         : null,
     });
@@ -844,12 +1012,7 @@ router.post("/auth-enabled", optionalAuth, async (req: Request, res: Response) =
 router.post("/registration/toggle", requireAuth, async (req: Request, res: Response) => {
   try {
     if (!(await ensureAuthEnabled(res))) return;
-    if (!req.user) {
-      return res.status(401).json({ error: "Unauthorized", message: "User not authenticated" });
-    }
-    if (req.user.role !== "ADMIN") {
-      return res.status(403).json({ error: "Forbidden", message: "Admin access required" });
-    }
+    if (!requireAdmin(req, res)) return;
 
     const parsed = registrationToggleSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -879,12 +1042,7 @@ router.post("/registration/toggle", requireAuth, async (req: Request, res: Respo
 router.post("/admins", requireAuth, async (req: Request, res: Response) => {
   try {
     if (!(await ensureAuthEnabled(res))) return;
-    if (!req.user) {
-      return res.status(401).json({ error: "Unauthorized", message: "User not authenticated" });
-    }
-    if (req.user.role !== "ADMIN") {
-      return res.status(403).json({ error: "Forbidden", message: "Admin access required" });
-    }
+    if (!requireAdmin(req, res)) return;
 
     const parsed = adminRoleUpdateSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -894,6 +1052,23 @@ router.post("/admins", requireAuth, async (req: Request, res: Response) => {
     const target = await findUserByIdentifier(parsed.data.identifier);
     if (!target) {
       return res.status(404).json({ error: "Not found", message: "User not found" });
+    }
+
+    if (target.id === req.user.id && parsed.data.role !== "ADMIN") {
+      return res.status(409).json({
+        error: "Conflict",
+        message: "You cannot change your own role from ADMIN",
+      });
+    }
+
+    if (target.role === "ADMIN" && parsed.data.role !== "ADMIN" && target.isActive) {
+      const admins = await countActiveAdmins();
+      if (admins <= 1) {
+        return res.status(409).json({
+          error: "Conflict",
+          message: "There must be at least one active admin",
+        });
+      }
     }
 
     const updated = await prisma.user.update({
@@ -921,6 +1096,539 @@ router.post("/admins", requireAuth, async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /auth/users
+ * List users (admin-only)
+ */
+router.get("/users", requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!(await ensureAuthEnabled(res))) return;
+    if (!requireAdmin(req, res)) return;
+
+    const users = await prisma.user.findMany({
+      orderBy: [{ createdAt: "asc" }],
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        name: true,
+        role: true,
+        mustResetPassword: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    res.json({ users });
+  } catch (error) {
+    console.error("List users error:", error);
+    res.status(500).json({
+      error: "Internal server error",
+      message: "Failed to list users",
+    });
+  }
+});
+
+/**
+ * GET /auth/rate-limit/login
+ * Get login rate limit config (admin-only)
+ */
+router.get("/rate-limit/login", requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!(await ensureAuthEnabled(res))) return;
+    if (!requireAdmin(req, res)) return;
+
+    const systemConfig = await ensureSystemConfig();
+    const cfg = parseLoginRateLimitConfig(systemConfig);
+    res.json({ config: cfg });
+  } catch (error) {
+    console.error("Get login rate limit config error:", error);
+    res.status(500).json({
+      error: "Internal server error",
+      message: "Failed to fetch login rate limit config",
+    });
+  }
+});
+
+/**
+ * PUT /auth/rate-limit/login
+ * Update login rate limit config (admin-only)
+ */
+router.put("/rate-limit/login", requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!(await ensureAuthEnabled(res))) return;
+    if (!requireAdmin(req, res)) return;
+
+    const parsed = loginRateLimitUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Validation error",
+        message: "Invalid rate limit config",
+      });
+    }
+
+    const updated = await prisma.systemConfig.update({
+      where: { id: DEFAULT_SYSTEM_CONFIG_ID },
+      data: {
+        authLoginRateLimitEnabled: parsed.data.enabled,
+        authLoginRateLimitWindowMs: parsed.data.windowMs,
+        authLoginRateLimitMax: parsed.data.max,
+      },
+    });
+
+    loginRateLimitConfig = parseLoginRateLimitConfig(updated);
+    buildLoginAttemptLimiter(loginRateLimitConfig);
+
+    if (config.enableAuditLogging) {
+      await logAuditEvent({
+        userId: req.user.id,
+        action: "admin_login_rate_limit_updated",
+        resource: "system_config",
+        ipAddress: req.ip || req.connection.remoteAddress || undefined,
+        userAgent: req.headers["user-agent"] || undefined,
+        details: { ...loginRateLimitConfig },
+      });
+    }
+
+    res.json({ config: loginRateLimitConfig });
+  } catch (error) {
+    console.error("Update login rate limit config error:", error);
+    res.status(500).json({
+      error: "Internal server error",
+      message: "Failed to update login rate limit config",
+    });
+  }
+});
+
+/**
+ * POST /auth/rate-limit/login/reset
+ * Reset login rate limit for an identifier (admin-only)
+ */
+router.post("/rate-limit/login/reset", requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!(await ensureAuthEnabled(res))) return;
+    if (!requireAdmin(req, res)) return;
+
+    const parsed = loginRateLimitResetSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Validation error",
+        message: "Invalid reset payload",
+      });
+    }
+
+    await ensureLoginAttemptLimiter();
+
+    const identifier = parsed.data.identifier.trim().toLowerCase();
+    const key = `login:${identifier}`;
+
+    try {
+      await loginAttemptLimiter?.resetKey(key);
+    } catch (error) {
+      // Best-effort; store may not support resetKey
+      if (process.env.NODE_ENV === "development") {
+        console.debug("Rate limit reset skipped:", error);
+      }
+    }
+
+    if (config.enableAuditLogging) {
+      await logAuditEvent({
+        userId: req.user.id,
+        action: "admin_login_rate_limit_reset",
+        resource: `rate_limit:${key}`,
+        ipAddress: req.ip || req.connection.remoteAddress || undefined,
+        userAgent: req.headers["user-agent"] || undefined,
+        details: { identifier },
+      });
+    }
+
+    res.json({ ok: true });
+  } catch (error) {
+    console.error("Reset login rate limit error:", error);
+    res.status(500).json({
+      error: "Internal server error",
+      message: "Failed to reset login rate limit",
+    });
+  }
+});
+
+/**
+ * POST /auth/users
+ * Create user (admin-only)
+ */
+router.post("/users", requireAuth, accountActionRateLimiter, async (req: Request, res: Response) => {
+  try {
+    if (!(await ensureAuthEnabled(res))) return;
+    if (!requireAdmin(req, res)) return;
+
+    const parsed = adminCreateUserSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Validation error",
+        message: "Invalid user payload",
+      });
+    }
+
+    const { email, password, name, username, role, mustResetPassword, isActive } = parsed.data;
+
+    const existingUser = await prisma.user.findUnique({ where: { email } });
+    if (existingUser) {
+      return res.status(409).json({
+        error: "Conflict",
+        message: "User with this email already exists",
+      });
+    }
+
+    if (username) {
+      const existingUsername = await prisma.user.findFirst({
+        where: { username },
+        select: { id: true },
+      });
+      if (existingUsername) {
+        return res.status(409).json({
+          error: "Conflict",
+          message: "User with this username already exists",
+        });
+      }
+    }
+
+    const saltRounds = 10;
+    const passwordHash = await bcrypt.hash(password, saltRounds);
+    const sanitizedName = sanitizeText(name, 100);
+
+    const user = await prisma.user.create({
+      data: {
+        email,
+        username: username ?? null,
+        passwordHash,
+        name: sanitizedName,
+        role: role ?? "USER",
+        mustResetPassword: mustResetPassword ?? false,
+        isActive: isActive ?? true,
+      },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        name: true,
+        role: true,
+        mustResetPassword: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    if (config.enableAuditLogging) {
+      await logAuditEvent({
+        userId: req.user.id,
+        action: "admin_user_created",
+        resource: `user:${user.id}`,
+        ipAddress: req.ip || req.connection.remoteAddress || undefined,
+        userAgent: req.headers["user-agent"] || undefined,
+        details: { createdUserId: user.id },
+      });
+    }
+
+    res.status(201).json({ user });
+  } catch (error) {
+    console.error("Create user error:", error);
+    res.status(500).json({
+      error: "Internal server error",
+      message: "Failed to create user",
+    });
+  }
+});
+
+/**
+ * PATCH /auth/users/:id
+ * Update user (admin-only)
+ */
+router.patch("/users/:id", requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!(await ensureAuthEnabled(res))) return;
+    if (!requireAdmin(req, res)) return;
+
+    const userId = String(req.params.id || "").trim();
+    if (!userId) {
+      return res.status(400).json({ error: "Bad request", message: "Invalid user id" });
+    }
+
+    const parsed = adminUpdateUserSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Bad request", message: "Invalid update payload" });
+    }
+
+    // Prevent admin locking themselves out accidentally.
+    if (userId === req.user.id && parsed.data.isActive === false) {
+      return res.status(409).json({
+        error: "Conflict",
+        message: "You cannot deactivate your own account",
+      });
+    }
+
+    if (userId === req.user.id && parsed.data.role && parsed.data.role !== "ADMIN") {
+      return res.status(409).json({
+        error: "Conflict",
+        message: "You cannot change your own role from ADMIN",
+      });
+    }
+
+    const current = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true, isActive: true },
+    });
+
+    if (!current) {
+      return res.status(404).json({ error: "Not found", message: "User not found" });
+    }
+
+    const nextRole = typeof parsed.data.role === "undefined" ? current.role : parsed.data.role;
+    const nextActive =
+      typeof parsed.data.isActive === "undefined" ? current.isActive : parsed.data.isActive;
+
+    const removingAdmin =
+      current.role === "ADMIN" &&
+      current.isActive &&
+      (nextRole !== "ADMIN" || nextActive === false);
+
+    if (removingAdmin) {
+      const admins = await countActiveAdmins();
+      if (admins <= 1) {
+        return res.status(409).json({
+          error: "Conflict",
+          message: "There must be at least one active admin",
+        });
+      }
+    }
+
+    const data: Record<string, unknown> = {};
+    if (typeof parsed.data.username !== "undefined") data.username = parsed.data.username;
+    if (typeof parsed.data.name !== "undefined") data.name = sanitizeText(parsed.data.name, 100);
+    if (typeof parsed.data.role !== "undefined") data.role = parsed.data.role;
+    if (typeof parsed.data.mustResetPassword !== "undefined")
+      data.mustResetPassword = parsed.data.mustResetPassword;
+    if (typeof parsed.data.isActive !== "undefined") data.isActive = parsed.data.isActive;
+
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data,
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        name: true,
+        role: true,
+        mustResetPassword: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    if (config.enableAuditLogging) {
+      await logAuditEvent({
+        userId: req.user.id,
+        action: "admin_user_updated",
+        resource: `user:${updated.id}`,
+        ipAddress: req.ip || req.connection.remoteAddress || undefined,
+        userAgent: req.headers["user-agent"] || undefined,
+        details: { updatedUserId: updated.id, fields: Object.keys(data) },
+      });
+    }
+
+    res.json({ user: updated });
+  } catch (error) {
+    console.error("Update user error:", error);
+    res.status(500).json({
+      error: "Internal server error",
+      message: "Failed to update user",
+    });
+  }
+});
+
+/**
+ * POST /auth/users/:id/reset-password
+ * Generate a temporary password for a user (admin-only).
+ * The user will be forced to set a new password on next sign-in.
+ */
+router.post("/users/:id/reset-password", requireAuth, accountActionRateLimiter, async (req: Request, res: Response) => {
+  try {
+    if (!(await ensureAuthEnabled(res))) return;
+    if (!requireAdmin(req, res)) return;
+
+    // Avoid foot-guns while impersonating (admin actions should be from the real admin session).
+    if (req.user.impersonatorId) {
+      return res.status(403).json({
+        error: "Forbidden",
+        message: "Password resets are not allowed while impersonating",
+      });
+    }
+
+    const userId = String(req.params.id || "").trim();
+    if (!userId) {
+      return res.status(400).json({ error: "Bad request", message: "Invalid user id" });
+    }
+
+    if (userId === req.user.id) {
+      return res.status(409).json({
+        error: "Conflict",
+        message: "Use Profile → Change Password for your own account",
+      });
+    }
+
+    const target = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        role: true,
+        isActive: true,
+      },
+    });
+
+    if (!target) {
+      return res.status(404).json({ error: "Not found", message: "User not found" });
+    }
+
+    const tempPassword = generateTempPassword();
+    const saltRounds = 10;
+    const passwordHash = await bcrypt.hash(tempPassword, saltRounds);
+
+    await prisma.user.update({
+      where: { id: target.id },
+      data: {
+        passwordHash,
+        mustResetPassword: true,
+        isActive: true,
+      },
+    });
+
+    // Revoke refresh tokens (best-effort) to force re-login and/or block existing sessions.
+    try {
+      await prisma.refreshToken.updateMany({
+        where: { userId: target.id, revoked: false },
+        data: { revoked: true },
+      });
+    } catch (error) {
+      if (process.env.NODE_ENV === "development") {
+        console.debug("Refresh token revocation skipped (feature disabled or table missing)");
+      }
+    }
+
+    // Reset login rate limit for this identifier (best-effort).
+    try {
+      await ensureLoginAttemptLimiter();
+      const key = `login:${target.email.toLowerCase()}`;
+      await loginAttemptLimiter?.resetKey(key);
+    } catch (error) {
+      if (process.env.NODE_ENV === "development") {
+        console.debug("Rate limit reset skipped:", error);
+      }
+    }
+
+    if (config.enableAuditLogging) {
+      await logAuditEvent({
+        userId: req.user.id,
+        action: "admin_password_reset_generated",
+        resource: `user:${target.id}`,
+        ipAddress: req.ip || req.connection.remoteAddress || undefined,
+        userAgent: req.headers["user-agent"] || undefined,
+        details: { targetUserId: target.id, targetEmail: target.email },
+      });
+    }
+
+    res.json({
+      user: { id: target.id, email: target.email, username: target.username, role: target.role },
+      tempPassword,
+    });
+  } catch (error) {
+    console.error("Reset password error:", error);
+    res.status(500).json({
+      error: "Internal server error",
+      message: "Failed to reset password",
+    });
+  }
+});
+
+/**
+ * POST /auth/impersonate
+ * Generate tokens for another user (admin-only)
+ */
+router.post("/impersonate", requireAuth, accountActionRateLimiter, async (req: Request, res: Response) => {
+  try {
+    if (!(await ensureAuthEnabled(res))) return;
+    if (!requireAdmin(req, res)) return;
+
+    const parsed = impersonateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Bad request", message: "Invalid impersonation payload" });
+    }
+
+    const target =
+      parsed.data.userId
+        ? await prisma.user.findUnique({ where: { id: parsed.data.userId } })
+        : await findUserByIdentifier(parsed.data.identifier || "");
+
+    if (!target) {
+      return res.status(404).json({ error: "Not found", message: "User not found" });
+    }
+
+    if (!target.isActive) {
+      return res.status(403).json({ error: "Forbidden", message: "Target user is inactive" });
+    }
+
+    const { accessToken, refreshToken } = generateTokens(target.id, target.email, {
+      impersonatorId: req.user.id,
+    });
+
+    if (config.enableRefreshTokenRotation) {
+      const expiresAt = getRefreshTokenExpiresAt();
+      try {
+        await prisma.refreshToken.create({
+          data: { userId: target.id, token: refreshToken, expiresAt },
+        });
+      } catch (error) {
+        if (process.env.NODE_ENV === "development") {
+          console.debug("Refresh token storage skipped (feature disabled or table missing)");
+        }
+      }
+    }
+
+    if (config.enableAuditLogging) {
+      await logAuditEvent({
+        userId: req.user.id,
+        action: "impersonation_started",
+        resource: `user:${target.id}`,
+        ipAddress: req.ip || req.connection.remoteAddress || undefined,
+        userAgent: req.headers["user-agent"] || undefined,
+        details: { targetUserId: target.id },
+      });
+    }
+
+    res.json({
+      user: {
+        id: target.id,
+        username: target.username ?? null,
+        email: target.email,
+        name: target.name,
+        role: target.role,
+        mustResetPassword: target.mustResetPassword,
+      },
+      accessToken,
+      refreshToken,
+    });
+  } catch (error) {
+    console.error("Impersonation error:", error);
+    res.status(500).json({
+      error: "Internal server error",
+      message: "Failed to impersonate user",
+    });
+  }
+});
+
+/**
  * POST /auth/password-reset-request
  * Request a password reset (sends reset token via email)
  * Only available if ENABLE_PASSWORD_RESET=true
@@ -929,7 +1637,7 @@ const passwordResetRequestSchema = z.object({
   email: z.string().email().toLowerCase().trim(),
 });
 
-router.post("/password-reset-request", authRateLimiter, async (req: Request, res: Response) => {
+router.post("/password-reset-request", loginAttemptRateLimiter, async (req: Request, res: Response) => {
   if (!(await ensureAuthEnabled(res))) return;
   // Check if password reset feature is enabled
   if (!config.enablePasswordReset) {
@@ -1026,7 +1734,7 @@ const passwordResetConfirmSchema = z.object({
   password: z.string().min(8).max(100),
 });
 
-router.post("/password-reset-confirm", authRateLimiter, async (req: Request, res: Response) => {
+router.post("/password-reset-confirm", loginAttemptRateLimiter, async (req: Request, res: Response) => {
   if (!(await ensureAuthEnabled(res))) return;
   // Check if password reset feature is enabled
   if (!config.enablePasswordReset) {
@@ -1144,6 +1852,12 @@ router.put("/profile", requireAuth, async (req: Request, res: Response) => {
         message: "User not authenticated",
       });
     }
+    if (req.user.impersonatorId) {
+      return res.status(403).json({
+        error: "Forbidden",
+        message: "Profile updates are not allowed while impersonating",
+      });
+    }
 
     const parsed = updateProfileSchema.safeParse(req.body);
 
@@ -1192,6 +1906,157 @@ router.put("/profile", requireAuth, async (req: Request, res: Response) => {
 });
 
 /**
+ * PUT /auth/email
+ * Change email (requires current password)
+ */
+const updateEmailSchema = z.object({
+  email: z.string().email().toLowerCase().trim(),
+  currentPassword: z.string().min(1).max(100),
+});
+
+router.put("/email", requireAuth, accountActionRateLimiter, async (req: Request, res: Response) => {
+  try {
+    if (!(await ensureAuthEnabled(res))) return;
+    if (!req.user) {
+      return res.status(401).json({
+        error: "Unauthorized",
+        message: "User not authenticated",
+      });
+    }
+    if (req.user.impersonatorId) {
+      return res.status(403).json({
+        error: "Forbidden",
+        message: "Email changes are not allowed while impersonating",
+      });
+    }
+
+    const parsed = updateEmailSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Validation error",
+        message: "Invalid email update data",
+      });
+    }
+
+    const newEmail = parsed.data.email;
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: {
+        id: true,
+        email: true,
+        passwordHash: true,
+        isActive: true,
+      },
+    });
+
+    if (!user || !user.isActive) {
+      return res.status(401).json({
+        error: "Unauthorized",
+        message: "User account not found or inactive",
+      });
+    }
+
+    if (!user.passwordHash) {
+      return res.status(400).json({
+        error: "Bad request",
+        message: "Cannot change email for this account",
+      });
+    }
+
+    const passwordValid = await bcrypt.compare(parsed.data.currentPassword, user.passwordHash);
+    if (!passwordValid) {
+      return res.status(401).json({
+        error: "Unauthorized",
+        message: "Current password is incorrect",
+      });
+    }
+
+    if (newEmail !== user.email) {
+      const existingUser = await prisma.user.findUnique({
+        where: { email: newEmail },
+        select: { id: true },
+      });
+
+      if (existingUser && existingUser.id !== user.id) {
+        return res.status(409).json({
+          error: "Conflict",
+          message: "User with this email already exists",
+        });
+      }
+    }
+
+    const previousEmail = user.email;
+
+    const updatedUser = await prisma.user.update({
+      where: { id: user.id },
+      data: { email: newEmail },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        name: true,
+        role: true,
+        mustResetPassword: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    // Revoke all refresh tokens for this user (force re-login) - if rotation enabled
+    if (config.enableRefreshTokenRotation) {
+      try {
+        await prisma.refreshToken.updateMany({
+          where: { userId: updatedUser.id, revoked: false },
+          data: { revoked: true },
+        });
+      } catch (error) {
+        if (process.env.NODE_ENV === "development") {
+          console.debug("Refresh token revocation skipped (feature disabled or table missing)");
+        }
+      }
+    }
+
+    const { accessToken, refreshToken } = generateTokens(updatedUser.id, updatedUser.email);
+
+    if (config.enableRefreshTokenRotation) {
+      const expiresAt = getRefreshTokenExpiresAt();
+      try {
+        await prisma.refreshToken.create({
+          data: { userId: updatedUser.id, token: refreshToken, expiresAt },
+        });
+      } catch (error) {
+        if (process.env.NODE_ENV === "development") {
+          console.debug("Refresh token storage skipped (feature disabled or table missing)");
+        }
+      }
+    }
+
+    if (config.enableAuditLogging) {
+      await logAuditEvent({
+        userId: updatedUser.id,
+        action: "email_updated",
+        ipAddress: req.ip || req.connection.remoteAddress || undefined,
+        userAgent: req.headers["user-agent"] || undefined,
+        details: { previousEmail, newEmail: updatedUser.email },
+      });
+    }
+
+    res.json({
+      user: updatedUser,
+      accessToken,
+      refreshToken,
+    });
+  } catch (error) {
+    console.error("Update email error:", error);
+    res.status(500).json({
+      error: "Internal server error",
+      message: "Failed to update email",
+    });
+  }
+});
+
+/**
  * POST /auth/change-password
  * Change password (requires current password)
  */
@@ -1200,13 +2065,19 @@ const changePasswordSchema = z.object({
   newPassword: z.string().min(8).max(100),
 });
 
-router.post("/change-password", requireAuth, authRateLimiter, async (req: Request, res: Response) => {
+router.post("/change-password", requireAuth, accountActionRateLimiter, async (req: Request, res: Response) => {
   try {
     if (!(await ensureAuthEnabled(res))) return;
     if (!req.user) {
       return res.status(401).json({
         error: "Unauthorized",
         message: "User not authenticated",
+      });
+    }
+    if (req.user.impersonatorId) {
+      return res.status(403).json({
+        error: "Forbidden",
+        message: "Password changes are not allowed while impersonating",
       });
     }
 
@@ -1288,6 +2159,127 @@ router.post("/change-password", requireAuth, authRateLimiter, async (req: Reques
     res.status(500).json({
       error: "Internal server error",
       message: "Failed to change password",
+    });
+  }
+});
+
+/**
+ * POST /auth/must-reset-password
+ * Complete a forced password reset (only when mustResetPassword=true)
+ */
+const mustResetPasswordSchema = z.object({
+  newPassword: z.string().min(8).max(100),
+});
+
+router.post("/must-reset-password", requireAuth, accountActionRateLimiter, async (req: Request, res: Response) => {
+  try {
+    if (!(await ensureAuthEnabled(res))) return;
+    if (!req.user) {
+      return res.status(401).json({
+        error: "Unauthorized",
+        message: "User not authenticated",
+      });
+    }
+    if (req.user.impersonatorId) {
+      return res.status(403).json({
+        error: "Forbidden",
+        message: "Password changes are not allowed while impersonating",
+      });
+    }
+
+    const parsed = mustResetPasswordSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Validation error",
+        message: "Invalid password data",
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { id: true, email: true, isActive: true, mustResetPassword: true },
+    });
+
+    if (!user || !user.isActive) {
+      return res.status(401).json({
+        error: "Unauthorized",
+        message: "User account not found or inactive",
+      });
+    }
+
+    if (!user.mustResetPassword) {
+      return res.status(409).json({
+        error: "Conflict",
+        message: "Password reset is not required for this account",
+      });
+    }
+
+    const saltRounds = 10;
+    const passwordHash = await bcrypt.hash(parsed.data.newPassword, saltRounds);
+
+    const updatedUser = await prisma.user.update({
+      where: { id: user.id },
+      data: { passwordHash, mustResetPassword: false },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        name: true,
+        role: true,
+        mustResetPassword: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    // Revoke all refresh tokens for this user (force old sessions to re-auth) - if rotation enabled
+    if (config.enableRefreshTokenRotation) {
+      try {
+        await prisma.refreshToken.updateMany({
+          where: { userId: updatedUser.id, revoked: false },
+          data: { revoked: true },
+        });
+      } catch (error) {
+        if (process.env.NODE_ENV === "development") {
+          console.debug("Refresh token revocation skipped (feature disabled or table missing)");
+        }
+      }
+    }
+
+    const { accessToken, refreshToken } = generateTokens(updatedUser.id, updatedUser.email);
+
+    if (config.enableRefreshTokenRotation) {
+      const expiresAt = getRefreshTokenExpiresAt();
+      try {
+        await prisma.refreshToken.create({
+          data: { userId: updatedUser.id, token: refreshToken, expiresAt },
+        });
+      } catch (error) {
+        if (process.env.NODE_ENV === "development") {
+          console.debug("Refresh token storage skipped (feature disabled or table missing)");
+        }
+      }
+    }
+
+    if (config.enableAuditLogging) {
+      await logAuditEvent({
+        userId: updatedUser.id,
+        action: "password_reset_required_completed",
+        ipAddress: req.ip || req.connection.remoteAddress || undefined,
+        userAgent: req.headers["user-agent"] || undefined,
+      });
+    }
+
+    res.json({
+      user: updatedUser,
+      accessToken,
+      refreshToken,
+    });
+  } catch (error) {
+    console.error("Must reset password error:", error);
+    res.status(500).json({
+      error: "Internal server error",
+      message: "Failed to reset password",
     });
   }
 });

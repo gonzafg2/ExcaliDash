@@ -1,5 +1,5 @@
 import React from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 interface ProtectedRouteProps {
@@ -7,7 +7,8 @@ interface ProtectedRouteProps {
 }
 
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
-  const { isAuthenticated, loading, authEnabled, bootstrapRequired } = useAuth();
+  const location = useLocation();
+  const { isAuthenticated, loading, authEnabled, bootstrapRequired, user } = useAuth();
 
   if (loading || authEnabled === null) {
     return (
@@ -28,6 +29,11 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
       return <Navigate to="/register" replace />;
     }
     return <Navigate to="/login" replace />;
+  }
+
+  // Force password reset before allowing app access.
+  if (user?.mustResetPassword && location.pathname !== '/login') {
+    return <Navigate to="/login?mustReset=1" replace />;
   }
 
   return <>{children}</>;
