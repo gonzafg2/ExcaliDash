@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import bcrypt from "bcrypt";
 import {
   getTestPrisma,
   cleanupTestDb,
@@ -28,7 +29,6 @@ describe("User Data Sandboxing", () => {
     prisma = getTestPrisma();
 
     // Create two test users
-    const bcrypt = require("bcrypt");
     const hashA = await bcrypt.hash("passwordA", 10);
     const hashB = await bcrypt.hash("passwordB", 10);
 

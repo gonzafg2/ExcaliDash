@@ -797,30 +797,35 @@ io.on("connection", (socket) => {
       drawingId: string;
       user: Omit<User, "socketId" | "isActive">;
     }) => {
-      // Verify the authenticated user owns this drawing
-      if (authenticatedUserId) {
-        const drawing = await prisma.drawing.findFirst({
-          where: { id: drawingId, userId: authenticatedUserId },
-          select: { id: true },
-        });
+      try {
+        // Verify the authenticated user owns this drawing
+        if (authenticatedUserId) {
+          const drawing = await prisma.drawing.findFirst({
+            where: { id: drawingId, userId: authenticatedUserId },
+            select: { id: true },
+          });
 
-        if (!drawing) {
-          socket.emit("error", { message: "Drawing not found or access denied" });
-          return;
+          if (!drawing) {
+            socket.emit("error", { message: "Drawing not found or access denied" });
+            return;
+          }
         }
+
+        const roomId = `drawing_${drawingId}`;
+        socket.join(roomId);
+
+        const newUser: User = { ...user, socketId: socket.id, isActive: true };
+
+        const currentUsers = roomUsers.get(roomId) || [];
+        const filteredUsers = currentUsers.filter((u) => u.id !== user.id);
+        filteredUsers.push(newUser);
+        roomUsers.set(roomId, filteredUsers);
+
+        io.to(roomId).emit("presence-update", filteredUsers);
+      } catch (err) {
+        console.error("Error in join-room handler:", err);
+        socket.emit("error", { message: "Failed to join room" });
       }
-
-      const roomId = `drawing_${drawingId}`;
-      socket.join(roomId);
-
-      const newUser: User = { ...user, socketId: socket.id, isActive: true };
-
-      const currentUsers = roomUsers.get(roomId) || [];
-      const filteredUsers = currentUsers.filter((u) => u.id !== user.id);
-      filteredUsers.push(newUser);
-      roomUsers.set(roomId, filteredUsers);
-
-      io.to(roomId).emit("presence-update", filteredUsers);
     }
   );
 
