@@ -60,8 +60,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
           }
         } catch {
-          // If status fails, assume auth is enabled (safer default).
-          setAuthEnabled(true);
+          // If status fails (backend down / schema mismatch), avoid locking the UI
+          // behind login. Backend still enforces auth when enabled.
+          setAuthEnabled(false);
+          setBootstrapRequired(false);
+          setUser(null);
+          return;
         }
 
         const storedUser = localStorage.getItem(USER_KEY);
