@@ -34,6 +34,33 @@ process.env.DATABASE_URL = databaseUrl;
 
 const nodeEnv = process.env.NODE_ENV || "development";
 
+const runCapture = (cmd) => {
+  try {
+    const stdout = execSync(cmd, {
+      cwd: backendRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+    });
+    return { ok: true, stdout: stdout || "", stderr: "" };
+  } catch (error) {
+    const err = error;
+    const stderr =
+      err && err.stderr
+        ? Buffer.isBuffer(err.stderr)
+          ? err.stderr.toString("utf8")
+          : String(err.stderr)
+        : "";
+    const stdout =
+      err && err.stdout
+        ? Buffer.isBuffer(err.stdout)
+          ? err.stdout.toString("utf8")
+          : String(err.stdout)
+        : "";
+    return { ok: false, stdout, stderr, error: err };
+  }
+};
+
 const run = (cmd) => {
   execSync(cmd, {
     cwd: backendRoot,
@@ -45,33 +72,6 @@ const run = (cmd) => {
 const getDbFilePath = () => {
   if (!databaseUrl.startsWith("file:")) return null;
   return databaseUrl.replace(/^file:/, "");
-};
-
-const isNonEmptyLegacyDbWithoutMigrations = () => {
-  const dbPath = getDbFilePath();
-  if (!dbPath) return false;
-  if (!fs.existsSync(dbPath)) return false;
-
-  // Only attempt this heuristic for SQLite file DBs.
-  const Database = require("better-sqlite3");
-  const db = new Database(dbPath, { readonly: true });
-  try {
-    const hasMigrations =
-      db
-        .prepare(
-          "SELECT 1 FROM sqlite_master WHERE type='table' AND name='_prisma_migrations' LIMIT 1",
-        )
-        .get() !== undefined;
-
-    const nonEmptyRow = db
-      .prepare("SELECT COUNT(*) AS cnt FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-      .get();
-    const nonEmpty = Number(nonEmptyRow?.cnt || 0) > 0;
-
-    return nonEmpty && !hasMigrations;
-  } finally {
-    db.close();
-  }
 };
 
 const backupDbIfPresent = () => {
@@ -91,17 +91,28 @@ const backupDbIfPresent = () => {
 const isNonProd = nodeEnv !== "production";
 const isFileDb = databaseUrl.startsWith("file:");
 
-if (isNonProd && isFileDb && isNonEmptyLegacyDbWithoutMigrations()) {
-  const backupPath = backupDbIfPresent();
-  console.warn(
-    `[predev] Prisma migrations cannot be deployed because the database was created without migrations.\n` +
-      `  DATABASE_URL=${databaseUrl}\n` +
-      (backupPath ? `  Backup: ${backupPath}\n` : "") +
-      `  Resetting local SQLite database to apply migrations.`,
-  );
+const deploy = runCapture("npx prisma migrate deploy");
+if (deploy.ok) {
+  if (deploy.stdout) process.stdout.write(deploy.stdout);
+} else {
+  if (deploy.stdout) process.stdout.write(deploy.stdout);
+  if (deploy.stderr) process.stderr.write(deploy.stderr);
 
-  run("npx prisma migrate reset --force --skip-seed");
-  process.exit(0);
+  const stderr = deploy.stderr || "";
+  const isP3005 = stderr.includes("P3005");
+
+  // Common when an older dev.db exists but migrations weren't used previously.
+  if (isNonProd && isFileDb && isP3005) {
+    const backupPath = backupDbIfPresent();
+    console.warn(
+      `[predev] Prisma migrate baseline required (P3005). Resetting local SQLite database.\n` +
+        `  DATABASE_URL=${databaseUrl}\n` +
+        (backupPath ? `  Backup: ${backupPath}\n` : "") +
+        `  If you need to preserve local data, restore the backup and baseline manually.`,
+    );
+
+    run("npx prisma migrate reset --force --skip-seed");
+  } else {
+    throw deploy.error;
+  }
 }
-
-run("npx prisma migrate deploy");
