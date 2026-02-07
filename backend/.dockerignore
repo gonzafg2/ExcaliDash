@@ -9,3 +9,7 @@ dist
 *.log
 prisma/dev.db
 prisma/dev.db-journal
+src/generated
+coverage
+*.test.ts
+*.spec.ts

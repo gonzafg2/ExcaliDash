@@ -7,7 +7,7 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 
 # Install dependencies
-RUN npm ci
+RUN npm ci && npm cache clean --force
 
 # Copy source code and config files
 COPY frontend/ ./
@@ -24,9 +24,6 @@ RUN npm run build
 
 # Production stage
 FROM nginx:alpine
-
-# Install envsubst (gettext) so we can template nginx config at runtime
-RUN apk add --no-cache gettext
 
 # Copy nginx config template (will be processed at runtime)
 COPY frontend/nginx.conf.template /etc/nginx/nginx.conf.template

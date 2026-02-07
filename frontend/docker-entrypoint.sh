@@ -7,9 +7,9 @@ export BACKEND_URL="${BACKEND_URL:-backend:8000}"
 
 echo "Configuring nginx with BACKEND_URL: ${BACKEND_URL}"
 
-# Substitute environment variables in nginx config template
-# Only substitute BACKEND_URL, preserve nginx variables like $http_upgrade
-envsubst '${BACKEND_URL}' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
+# Replace only our custom placeholder and preserve nginx runtime vars like $http_upgrade
+ESCAPED_BACKEND_URL=$(printf '%s\n' "$BACKEND_URL" | sed 's/[\/&]/\\&/g')
+sed "s/__BACKEND_URL__/${ESCAPED_BACKEND_URL}/g" /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
 
 # Validate the generated nginx configuration before starting
 echo "Validating nginx configuration..."
