@@ -334,7 +334,20 @@ export const registerDashboardRoutes = (
       }
     }
 
-    const updatedDrawing = await prisma.drawing.update({ where: { id }, data });
+    const updateResult = await prisma.drawing.updateMany({
+      where: { id, userId: req.user.id },
+      data,
+    });
+    if (updateResult.count === 0) {
+      return res.status(404).json({ error: "Drawing not found" });
+    }
+
+    const updatedDrawing = await prisma.drawing.findFirst({
+      where: { id, userId: req.user.id },
+    });
+    if (!updatedDrawing) {
+      return res.status(404).json({ error: "Drawing not found" });
+    }
     invalidateDrawingsCache();
 
     return res.json({
@@ -352,7 +365,12 @@ export const registerDashboardRoutes = (
     const drawing = await prisma.drawing.findFirst({ where: { id, userId: req.user.id } });
     if (!drawing) return res.status(404).json({ error: "Drawing not found" });
 
-    await prisma.drawing.delete({ where: { id } });
+    const deleteResult = await prisma.drawing.deleteMany({
+      where: { id, userId: req.user.id },
+    });
+    if (deleteResult.count === 0) {
+      return res.status(404).json({ error: "Drawing not found" });
+    }
     invalidateDrawingsCache();
 
     if (config.enableAuditLogging) {
@@ -375,6 +393,9 @@ export const registerDashboardRoutes = (
     const { id } = req.params;
     const original = await prisma.drawing.findFirst({ where: { id, userId: req.user.id } });
     if (!original) return res.status(404).json({ error: "Original drawing not found" });
+    if (original.collectionId === "trash") {
+      await ensureTrashCollection(prisma, req.user.id);
+    }
 
     const newDrawing = await prisma.drawing.create({
       data: {
@@ -443,10 +464,19 @@ export const registerDashboardRoutes = (
     }
 
     const sanitizedName = sanitizeText(parsed.data, 100);
-    const updatedCollection = await prisma.collection.update({
-      where: { id },
+    const updateResult = await prisma.collection.updateMany({
+      where: { id, userId: req.user.id },
       data: { name: sanitizedName },
     });
+    if (updateResult.count === 0) {
+      return res.status(404).json({ error: "Collection not found" });
+    }
+    const updatedCollection = await prisma.collection.findFirst({
+      where: { id, userId: req.user.id },
+    });
+    if (!updatedCollection) {
+      return res.status(404).json({ error: "Collection not found" });
+    }
     return res.json(updatedCollection);
   }));
 
@@ -464,7 +494,7 @@ export const registerDashboardRoutes = (
         where: { collectionId: id, userId: req.user.id },
         data: { collectionId: null },
       }),
-      prisma.collection.delete({ where: { id } }),
+      prisma.collection.deleteMany({ where: { id, userId: req.user.id } }),
     ]);
     invalidateDrawingsCache();
 

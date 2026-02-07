@@ -131,6 +131,21 @@ const makeUniqueName = (base: string, used: Set<string>): string => {
   return candidate;
 };
 
+const findFirstDuplicate = (values: string[]): string | null => {
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (seen.has(value)) return value;
+    seen.add(value);
+  }
+  return null;
+};
+
+const normalizeNonEmptyId = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
 const findSqliteTable = (tables: string[], candidates: string[]): string | null => {
   const byLower = new Map(tables.map((t) => [t.toLowerCase(), t]));
   for (const candidate of candidates) {
@@ -439,6 +454,28 @@ Drawings: ${drawings.length}
           message: `Too many drawings (max ${MAX_IMPORT_DRAWINGS})`,
         });
       }
+
+      const duplicateCollectionId = findFirstDuplicate(manifest.collections.map((c) => c.id));
+      if (duplicateCollectionId) {
+        return res.status(400).json({
+          error: "Invalid backup manifest",
+          message: `Duplicate collection id in manifest: ${duplicateCollectionId}`,
+        });
+      }
+      const duplicateDrawingId = findFirstDuplicate(manifest.drawings.map((d) => d.id));
+      if (duplicateDrawingId) {
+        return res.status(400).json({
+          error: "Invalid backup manifest",
+          message: `Duplicate drawing id in manifest: ${duplicateDrawingId}`,
+        });
+      }
+      const duplicateDrawingPath = findFirstDuplicate(manifest.drawings.map((d) => d.filePath));
+      if (duplicateDrawingPath) {
+        return res.status(400).json({
+          error: "Invalid backup manifest",
+          message: `Duplicate drawing file path in manifest: ${duplicateDrawingPath}`,
+        });
+      }
       for (const drawing of manifest.drawings) {
         if (!getSafeZipEntry(zip, drawing.filePath)) {
           return res.status(400).json({
@@ -529,6 +566,28 @@ Drawings: ${drawings.length}
         return res.status(400).json({
           error: "Invalid backup manifest",
           message: `Too many drawings (max ${MAX_IMPORT_DRAWINGS})`,
+        });
+      }
+
+      const duplicateCollectionId = findFirstDuplicate(manifest.collections.map((c) => c.id));
+      if (duplicateCollectionId) {
+        return res.status(400).json({
+          error: "Invalid backup manifest",
+          message: `Duplicate collection id in manifest: ${duplicateCollectionId}`,
+        });
+      }
+      const duplicateDrawingId = findFirstDuplicate(manifest.drawings.map((d) => d.id));
+      if (duplicateDrawingId) {
+        return res.status(400).json({
+          error: "Invalid backup manifest",
+          message: `Duplicate drawing id in manifest: ${duplicateDrawingId}`,
+        });
+      }
+      const duplicateDrawingPath = findFirstDuplicate(manifest.drawings.map((d) => d.filePath));
+      if (duplicateDrawingPath) {
+        return res.status(400).json({
+          error: "Invalid backup manifest",
+          message: `Duplicate drawing file path in manifest: ${duplicateDrawingPath}`,
         });
       }
 
@@ -772,6 +831,31 @@ Drawings: ${drawings.length}
           });
         }
 
+        const duplicateDrawingIdRow = db
+          .prepare(
+            `SELECT id FROM "${drawingTable}" WHERE id IS NOT NULL GROUP BY id HAVING COUNT(1) > 1 LIMIT 1`
+          )
+          .get();
+        if (duplicateDrawingIdRow?.id) {
+          return res.status(400).json({
+            error: "Invalid legacy DB",
+            message: `Duplicate drawing id in legacy DB: ${String(duplicateDrawingIdRow.id)}`,
+          });
+        }
+        if (collectionTable) {
+          const duplicateCollectionIdRow = db
+            .prepare(
+              `SELECT id FROM "${collectionTable}" WHERE id IS NOT NULL GROUP BY id HAVING COUNT(1) > 1 LIMIT 1`
+            )
+            .get();
+          if (duplicateCollectionIdRow?.id) {
+            return res.status(400).json({
+              error: "Invalid legacy DB",
+              message: `Duplicate collection id in legacy DB: ${String(duplicateCollectionIdRow.id)}`,
+            });
+          }
+        }
+
         let latestMigration: string | null = null;
         const migrationsTable = findSqliteTable(tables, ["_prisma_migrations"]);
         if (migrationsTable) {
@@ -859,6 +943,28 @@ Drawings: ${drawings.length}
           return res.status(400).json({
             error: "Invalid legacy DB",
             message: `Too many drawings (max ${MAX_IMPORT_DRAWINGS})`,
+          });
+        }
+
+        const importedCollectionIds = importedCollections
+          .map((c) => normalizeNonEmptyId(c?.id))
+          .filter((id): id is string => id !== null);
+        const duplicateCollectionId = findFirstDuplicate(importedCollectionIds);
+        if (duplicateCollectionId) {
+          return res.status(400).json({
+            error: "Invalid legacy DB",
+            message: `Duplicate collection id in legacy DB: ${duplicateCollectionId}`,
+          });
+        }
+
+        const importedDrawingIds = importedDrawings
+          .map((d) => normalizeNonEmptyId(d?.id))
+          .filter((id): id is string => id !== null);
+        const duplicateDrawingId = findFirstDuplicate(importedDrawingIds);
+        if (duplicateDrawingId) {
+          return res.status(400).json({
+            error: "Invalid legacy DB",
+            message: `Duplicate drawing id in legacy DB: ${duplicateDrawingId}`,
           });
         }
 

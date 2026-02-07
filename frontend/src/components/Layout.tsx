@@ -36,6 +36,8 @@ export const Layout: React.FC<LayoutProps> = ({
   const sidebarRef = useRef<HTMLDivElement>(null);
   const startXRef = useRef(0);
   const startWidthRef = useRef(0);
+  const resizeMouseMoveHandlerRef = useRef<((e: MouseEvent) => void) | null>(null);
+  const resizeMouseUpHandlerRef = useRef<(() => void) | null>(null);
 
   // Handle mouse down on resize handle
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -43,6 +45,13 @@ export const Layout: React.FC<LayoutProps> = ({
     setIsResizing(true);
     startXRef.current = e.clientX;
     startWidthRef.current = sidebarWidth;
+
+    if (resizeMouseMoveHandlerRef.current) {
+      document.removeEventListener('mousemove', resizeMouseMoveHandlerRef.current);
+    }
+    if (resizeMouseUpHandlerRef.current) {
+      document.removeEventListener('mouseup', resizeMouseUpHandlerRef.current);
+    }
 
     const handleMouseMove = (e: MouseEvent) => {
       const diff = e.clientX - startXRef.current;
@@ -54,8 +63,12 @@ export const Layout: React.FC<LayoutProps> = ({
       setIsResizing(false);
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      resizeMouseMoveHandlerRef.current = null;
+      resizeMouseUpHandlerRef.current = null;
     };
 
+    resizeMouseMoveHandlerRef.current = handleMouseMove;
+    resizeMouseUpHandlerRef.current = handleMouseUp;
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
   };
@@ -63,8 +76,14 @@ export const Layout: React.FC<LayoutProps> = ({
   // Cleanup event listeners on unmount
   useEffect(() => {
     return () => {
-      document.removeEventListener('mousemove', () => {});
-      document.removeEventListener('mouseup', () => {});
+      if (resizeMouseMoveHandlerRef.current) {
+        document.removeEventListener('mousemove', resizeMouseMoveHandlerRef.current);
+        resizeMouseMoveHandlerRef.current = null;
+      }
+      if (resizeMouseUpHandlerRef.current) {
+        document.removeEventListener('mouseup', resizeMouseUpHandlerRef.current);
+        resizeMouseUpHandlerRef.current = null;
+      }
     };
   }, []);
 

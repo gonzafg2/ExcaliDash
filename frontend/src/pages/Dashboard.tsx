@@ -73,12 +73,14 @@ export const Dashboard: React.FC = () => {
   });
 
   const [isLoading, setIsLoading] = useState(false);
+  const listRequestVersionRef = useRef(0);
 
   const { uploadFiles } = useUpload();
 
   const hasMore = drawings.length < totalCount;
 
   const refreshData = useCallback(async () => {
+    const requestVersion = ++listRequestVersionRef.current;
     setIsLoading(true);
     try {
       const [drawingsRes, collectionsData] = await Promise.all([
@@ -90,6 +92,7 @@ export const Dashboard: React.FC = () => {
         }),
         api.getCollections()
       ]);
+      if (requestVersion !== listRequestVersionRef.current) return;
       setDrawings(drawingsRes.drawings);
       setTotalCount(drawingsRes.totalCount);
       setCollections(collectionsData);
@@ -97,12 +100,15 @@ export const Dashboard: React.FC = () => {
     } catch (err) {
       console.error('Failed to fetch data:', err);
     } finally {
-      setIsLoading(false);
+      if (requestVersion === listRequestVersionRef.current) {
+        setIsLoading(false);
+      }
     }
   }, [debouncedSearch, selectedCollectionId, sortConfig.field, sortConfig.direction]);
 
   const fetchMore = useCallback(async () => {
     if (isFetchingMore || !hasMore || isLoading) return;
+    const requestVersion = listRequestVersionRef.current;
     setIsFetchingMore(true);
     try {
       const drawingsRes = await api.getDrawings(debouncedSearch, selectedCollectionId, {
@@ -111,7 +117,12 @@ export const Dashboard: React.FC = () => {
         sortField: sortConfig.field,
         sortDirection: sortConfig.direction,
       });
-      setDrawings(prev => [...prev, ...drawingsRes.drawings]);
+      if (requestVersion !== listRequestVersionRef.current) return;
+      setDrawings(prev => {
+        const seen = new Set(prev.map((d) => d.id));
+        const nextPage = drawingsRes.drawings.filter((d) => !seen.has(d.id));
+        return [...prev, ...nextPage];
+      });
       setTotalCount(drawingsRes.totalCount);
     } catch (err) {
       console.error('Failed to fetch more data:', err);
