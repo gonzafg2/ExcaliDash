@@ -259,8 +259,12 @@ app.use((req, res, next) => {
   next();
 });
 
-// HTTPS enforcement in production
-if (config.nodeEnv === "production") {
+// HTTPS enforcement in production only when configured frontend origins use HTTPS.
+const shouldEnforceHttps =
+  config.nodeEnv === "production" &&
+  allowedOrigins.some((origin) => origin.toLowerCase().startsWith("https://"));
+
+if (shouldEnforceHttps) {
   app.use((req, res, next) => {
     if (req.header("x-forwarded-proto") !== "https") {
       res.redirect(`https://${req.header("host")}${req.url}`);
