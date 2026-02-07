@@ -17,6 +17,21 @@ export const haveSameElements = (a: readonly any[] = [], b: readonly any[] = [])
   return true;
 };
 
+export const hasRenderableElements = (elements: readonly any[] = []): boolean =>
+  elements.some((element: any) => !element?.isDeleted);
+
+/**
+ * Guard against transient empty snapshots (e.g. hydration/reload races) from
+ * overwriting a previously persisted non-empty drawing.
+ */
+export const isSuspiciousEmptySnapshot = (
+  previousPersisted: readonly any[] = [],
+  nextSnapshot: readonly any[] = []
+): boolean => {
+  if (!Array.isArray(nextSnapshot) || nextSnapshot.length > 0) return false;
+  return hasRenderableElements(previousPersisted);
+};
+
 const buildFileSignature = (file: any): string => {
   const mimeType = typeof file?.mimeType === "string" ? file.mimeType : "";
   const id = typeof file?.id === "string" ? file.id : "";

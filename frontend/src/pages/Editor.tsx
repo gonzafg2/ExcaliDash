@@ -19,7 +19,9 @@ import {
   getColorFromString,
   getFilesDelta,
   getInitialsFromName,
+  hasRenderableElements,
   haveSameElements,
+  isSuspiciousEmptySnapshot,
 } from './editor/shared';
 import type { ElementVersionInfo } from './editor/shared';
 
@@ -124,7 +126,9 @@ export const Editor: React.FC = () => {
   const latestFilesRef = useRef<any>(null);
   const lastSyncedFilesRef = useRef<Record<string, any>>({});
   const latestAppStateRef = useRef<any>(null);
-  const debouncedSaveRef = useRef<((drawingId: string, elements: readonly any[], appState: any) => void) | null>(null);
+  const debouncedSaveRef = useRef<((drawingId: string, elements: readonly any[], appState: any, files?: Record<string, any>) => void) | null>(null);
+  const currentDrawingVersionRef = useRef<number | null>(null);
+  const lastPersistedElementsRef = useRef<readonly any[]>([]);
 
   const emitFilesDeltaIfNeeded = useCallback(
     (nextFiles: Record<string, any>) => {
@@ -362,7 +366,7 @@ export const Editor: React.FC = () => {
 
         // Persist after file data becomes available so new tabs (tab3) load correctly.
         if (didEmit && id && latestAppStateRef.current && debouncedSaveRef.current) {
-          debouncedSaveRef.current(id, latestElementsRef.current, latestAppStateRef.current);
+          debouncedSaveRef.current(id, latestElementsRef.current, latestAppStateRef.current, latestFilesRef.current || {});
         }
       };
     }
@@ -428,11 +432,11 @@ export const Editor: React.FC = () => {
     scrollToContent: true,
   }), []);
 
-  const saveDataRef = useRef<((drawingId: string, elements: readonly any[], appState: any) => Promise<void>) | null>(null);
+  const saveDataRef = useRef<((drawingId: string, elements: readonly any[], appState: any, files?: Record<string, any>) => Promise<void>) | null>(null);
   const savePreviewRef = useRef<((drawingId: string, elements: readonly any[], appState: any, files: any) => Promise<void>) | null>(null);
   const saveLibraryRef = useRef<((items: any[]) => Promise<void>) | null>(null);
 
-  saveDataRef.current = async (drawingId: string, elements: readonly any[], appState: any) => {
+  saveDataRef.current = async (drawingId: string, elements: readonly any[], appState: any, files?: Record<string, any>) => {
     if (!drawingId) return;
 
     try {
@@ -442,24 +446,38 @@ export const Editor: React.FC = () => {
         gridSize: appState?.gridSize || null,
       };
 
-      const snapshot = latestElementsRef.current ?? elements ?? [];
-      const persistableElements = Array.isArray(snapshot) ? snapshot : [];
+      const persistableElements = Array.isArray(elements) ? elements : [];
+      if (isSuspiciousEmptySnapshot(lastPersistedElementsRef.current, persistableElements)) {
+        console.warn("[Editor] Skipping suspicious empty snapshot save", { drawingId });
+        return;
+      }
+      const persistableFiles = files ?? latestFilesRef.current ?? {};
 
       console.log("[Editor] Saving drawing", {
         drawingId,
         elementCount: persistableElements.length,
-        hasRenderableElements: persistableElements.some((el: any) => !el?.isDeleted),
+        hasRenderableElements: hasRenderableElements(persistableElements),
         appState: persistableAppState,
       });
 
-      await api.updateDrawing(drawingId, {
+      const updated = await api.updateDrawing(drawingId, {
         elements: persistableElements,
         appState: persistableAppState,
-        files: latestFilesRef.current || {},
+        files: persistableFiles,
+        version: currentDrawingVersionRef.current ?? undefined,
       });
+      if (typeof updated.version === "number") {
+        currentDrawingVersionRef.current = updated.version;
+      }
+      lastPersistedElementsRef.current = persistableElements;
 
       console.log("[Editor] Save complete", { drawingId });
     } catch (err) {
+      if (api.isAxiosError(err) && err.response?.status === 409) {
+        console.warn("[Editor] Version conflict while saving drawing", { drawingId });
+        toast.error("Drawing changed in another tab. Refresh to load latest.");
+        return;
+      }
       console.error('Failed to save drawing', err);
       toast.error("Failed to save changes");
     }
@@ -509,9 +527,9 @@ export const Editor: React.FC = () => {
 
 
   const debouncedSave = useCallback(
-    debounce((drawingId, elements, appState) => {
+    debounce((drawingId, elements, appState, files) => {
       if (saveDataRef.current) {
-        saveDataRef.current(drawingId, elements, appState);
+        saveDataRef.current(drawingId, elements, appState, files);
       }
     }, 1000),
     [] // Empty dependency array = Stable across renders
@@ -587,6 +605,8 @@ export const Editor: React.FC = () => {
     latestElementsRef.current = [];
     latestFilesRef.current = {};
     lastSyncedFilesRef.current = {};
+    currentDrawingVersionRef.current = null;
+    lastPersistedElementsRef.current = [];
     excalidrawAPI.current = null;
     setIsReady(false);
     setIsSceneLoading(true);
@@ -614,6 +634,8 @@ export const Editor: React.FC = () => {
         latestElementsRef.current = elements;
         latestFilesRef.current = files;
         lastSyncedFilesRef.current = files;
+        currentDrawingVersionRef.current = typeof data.version === "number" ? data.version : null;
+        lastPersistedElementsRef.current = elements;
 
         elements.forEach((el: any) => {
           recordElementVersion(el);
@@ -657,6 +679,8 @@ export const Editor: React.FC = () => {
         latestElementsRef.current = [];
         latestFilesRef.current = {};
         lastSyncedFilesRef.current = {};
+        currentDrawingVersionRef.current = null;
+        lastPersistedElementsRef.current = [];
         setLoadError(message);
         setInitialData(null);
       } finally {
@@ -678,7 +702,7 @@ export const Editor: React.FC = () => {
           latestElementsRef.current = elements;
           latestFilesRef.current = files;
           if (!id) return;
-          await saveDataRef.current(id, elements, appState);
+          await saveDataRef.current(id, elements, appState, files);
           savePreviewRef.current(id, elements, appState, files);
           toast.success("Saved changes to server");
         }
@@ -729,8 +753,8 @@ export const Editor: React.FC = () => {
 
     latestElementsRef.current = allElements;
 
-    const hasRenderableElements = allElements.some((el: any) => !el?.isDeleted);
-    if (isBootstrappingScene.current && !hasRenderableElements) {
+    const hasRenderable = hasRenderableElements(allElements);
+    if (isBootstrappingScene.current && !hasRenderable) {
       console.log("[Editor] Bootstrapping guard active", {
         drawingId: id,
         elementCount: allElements.length,
@@ -741,19 +765,20 @@ export const Editor: React.FC = () => {
     // Trigger Sync (Throttled)
     broadcastChanges(allElements, currentFiles);
 
+    const filesSnapshot = currentFiles;
+    latestFilesRef.current = filesSnapshot;
+
     // Trigger Fast Save
     console.log("[Editor] Queueing save", {
       drawingId: id,
       elementCount: allElements.length,
-      hasRenderableElements,
+      hasRenderableElements: hasRenderable,
     });
     if (id) {
-      debouncedSave(id, allElements, appState);
+      debouncedSave(id, allElements, appState, filesSnapshot);
     }
 
     // Trigger Slow Preview Gen
-    const filesSnapshot = currentFiles;
-    latestFilesRef.current = filesSnapshot;
     console.log("[Editor] Queueing preview save", {
       drawingId: id,
       fileCount: Object.keys(filesSnapshot).length,
@@ -779,7 +804,7 @@ export const Editor: React.FC = () => {
 
       // Persist after file data becomes available (covers the "tab 3" case).
       if (didEmit && latestAppStateRef.current && debouncedSaveRef.current) {
-        debouncedSaveRef.current(id, latestElementsRef.current, latestAppStateRef.current);
+        debouncedSaveRef.current(id, latestElementsRef.current, latestAppStateRef.current, nextFiles);
       }
     }, 1000);
 
@@ -823,7 +848,7 @@ export const Editor: React.FC = () => {
         latestFilesRef.current = files;
 
         await Promise.all([
-          saveDataRef.current(id, elements, appState),
+          saveDataRef.current(id, elements, appState, files),
           savePreviewRef.current(id, elements, appState, files)
         ]);
         console.log("[Editor] Saved on back navigation", { drawingId: id });
