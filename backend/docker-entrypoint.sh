@@ -1,6 +1,30 @@
 #!/bin/sh
 set -e
 
+JWT_SECRET_FILE="/app/prisma/.jwt_secret"
+
+# Ensure JWT secret exists for production startup.
+# Backward compatibility: older installs may not have JWT_SECRET configured.
+if [ -z "${JWT_SECRET:-}" ]; then
+    echo "JWT_SECRET not provided, resolving persisted secret..."
+    if [ -f "${JWT_SECRET_FILE}" ]; then
+        JWT_SECRET="$(tr -d '\r\n' < "${JWT_SECRET_FILE}")"
+    fi
+
+    if [ -z "${JWT_SECRET}" ]; then
+        echo "No persisted JWT secret found. Generating a new secret..."
+        JWT_SECRET="$(openssl rand -hex 32)"
+        umask 077
+        printf "%s" "${JWT_SECRET}" > "${JWT_SECRET_FILE}"
+    fi
+else
+    # Persist explicitly provided secret to support future restarts without env injection.
+    umask 077
+    printf "%s" "${JWT_SECRET}" > "${JWT_SECRET_FILE}"
+fi
+
+export JWT_SECRET
+
 # 1. Hydrate volume if empty (Running as root)
 if [ ! -f "/app/prisma/schema.prisma" ]; then
     echo "Mount is empty. Hydrating /app/prisma..."
@@ -18,6 +42,7 @@ echo "Fixing filesystem permissions..."
 chown -R nodejs:nodejs /app/uploads
 chown -R nodejs:nodejs /app/prisma
 chmod 755 /app/uploads
+chmod 600 "${JWT_SECRET_FILE}"
 
 # Ensure database file has proper permissions
 if [ -f "/app/prisma/dev.db" ]; then

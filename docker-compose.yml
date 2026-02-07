@@ -8,7 +8,9 @@ services:
       - DATABASE_URL=file:/app/prisma/dev.db
       - PORT=8000
       - NODE_ENV=production
-      # Required for authentication: must be explicitly set to a strong secret (min 32 chars)
+      # Optional for single-instance deployments:
+      # if unset, backend auto-generates and persists one in the volume.
+      # Recommended to set explicitly for portability and multi-instance setups.
       - JWT_SECRET=${JWT_SECRET}
       # Required for horizontal scaling (k8s): uncomment and set to same value on all instances
       # - CSRF_SECRET=${CSRF_SECRET}
