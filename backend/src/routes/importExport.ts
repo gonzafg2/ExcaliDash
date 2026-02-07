@@ -146,6 +146,21 @@ const normalizeNonEmptyId = (value: unknown): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
+const getUserTrashCollectionId = (userId: string): string => `trash:${userId}`;
+
+const isTrashCollectionId = (
+  collectionId: string | null | undefined,
+  userId: string
+): boolean =>
+  Boolean(collectionId) &&
+  (collectionId === "trash" || collectionId === getUserTrashCollectionId(userId));
+
+const toPublicTrashCollectionId = (
+  collectionId: string | null | undefined,
+  userId: string
+): string | null =>
+  isTrashCollectionId(collectionId, userId) ? "trash" : collectionId ?? null;
+
 const findSqliteTable = (tables: string[], candidates: string[]): string | null => {
   const byLower = new Map(tables.map((t) => [t.toLowerCase(), t]));
   for (const candidate of candidates) {
@@ -264,6 +279,7 @@ export const registerImportExportRoutes = (deps: RegisterImportExportDeps) => {
 
   app.get("/export/excalidash", requireAuth, asyncHandler(async (req, res) => {
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    const trashCollectionId = getUserTrashCollectionId(req.user.id);
 
     const extParam = typeof req.query.ext === "string" ? req.query.ext.toLowerCase() : "";
     const zipSuffix = extParam === "zip";
@@ -281,10 +297,23 @@ export const registerImportExportRoutes = (deps: RegisterImportExportDeps) => {
       where: { userId: req.user.id },
     });
 
-    const hasTrashDrawings = drawings.some((d) => d.collectionId === "trash");
-    const collectionsToExport = [...userCollections];
-    if (hasTrashDrawings && !collectionsToExport.some((c) => c.id === "trash")) {
-      const trash = await prisma.collection.findUnique({ where: { id: "trash" } });
+    const hasInternalTrashCollection = userCollections.some((collection) => collection.id === trashCollectionId);
+    const normalizedUserCollections = userCollections.filter(
+      (collection) => !(hasInternalTrashCollection && collection.id === "trash")
+    );
+    const hasTrashDrawings = drawings.some((drawing) =>
+      isTrashCollectionId(drawing.collectionId, req.user!.id)
+    );
+    const collectionsToExport = [...normalizedUserCollections];
+    if (
+      hasTrashDrawings &&
+      !collectionsToExport.some((collection) =>
+        isTrashCollectionId(collection.id, req.user!.id)
+      )
+    ) {
+      const trash = await prisma.collection.findFirst({
+        where: { userId: req.user.id, id: { in: [trashCollectionId, "trash"] } },
+      });
       if (trash) collectionsToExport.push(trash);
     }
 
@@ -309,12 +338,22 @@ export const registerImportExportRoutes = (deps: RegisterImportExportDeps) => {
         id: drawing.id,
         name: drawing.name,
         filePath: `${folder}/${fileName}`,
-        collectionId: drawing.collectionId ?? null,
+        collectionId: toPublicTrashCollectionId(drawing.collectionId, req.user!.id),
         version: drawing.version,
         createdAt: drawing.createdAt.toISOString(),
         updatedAt: drawing.updatedAt.toISOString(),
       };
     });
+
+    const manifestCollections = collectionsToExport
+      .map((collection) => ({
+        id: toPublicTrashCollectionId(collection.id, req.user!.id) || collection.id,
+        name: isTrashCollectionId(collection.id, req.user!.id) ? "Trash" : collection.name,
+        folder: folderByCollectionId.get(collection.id) || sanitizePathSegment(collection.name, "Collection"),
+        createdAt: collection.createdAt.toISOString(),
+        updatedAt: collection.updatedAt.toISOString(),
+      }))
+      .filter((collection, index, all) => all.findIndex((c) => c.id === collection.id) === index);
 
     const manifest = {
       format: "excalidash" as const,
@@ -323,13 +362,7 @@ export const registerImportExportRoutes = (deps: RegisterImportExportDeps) => {
       excalidashBackendVersion: getBackendVersion(),
       userId: req.user.id,
       unorganizedFolder,
-      collections: collectionsToExport.map((c) => ({
-        id: c.id,
-        name: c.name,
-        folder: folderByCollectionId.get(c.id) || sanitizePathSegment(c.name, "Collection"),
-        createdAt: c.createdAt.toISOString(),
-        updatedAt: c.updatedAt.toISOString(),
-      })),
+      collections: manifestCollections,
       drawings: drawingsManifest,
     };
 
@@ -657,6 +690,7 @@ Drawings: ${drawings.length}
       }
 
       const result = await prisma.$transaction(async (tx) => {
+        const trashCollectionId = getUserTrashCollectionId(req.user!.id);
         const collectionIdMap = new Map<string, string>();
         let collectionsCreated = 0;
         let collectionsUpdated = 0;
@@ -672,7 +706,7 @@ Drawings: ${drawings.length}
 
         for (const c of manifest.collections) {
           if (c.id === "trash") {
-            collectionIdMap.set("trash", "trash");
+            collectionIdMap.set("trash", trashCollectionId);
             continue;
           }
 
@@ -707,7 +741,7 @@ Drawings: ${drawings.length}
 
         const resolveCollectionId = (collectionId: string | null): string | null => {
           if (!collectionId) return null;
-          if (collectionId === "trash") return "trash";
+          if (collectionId === "trash") return trashCollectionId;
           return collectionIdMap.get(collectionId) || null;
         };
 
@@ -1006,6 +1040,7 @@ Drawings: ${drawings.length}
         }
 
         const result = await prisma.$transaction(async (tx) => {
+          const trashCollectionId = getUserTrashCollectionId(req.user!.id);
           const hasTrash = importedDrawings.some((d) => String(d.collectionId || "") === "trash");
           if (hasTrash) await ensureTrashCollection(tx, req.user!.id);
 
@@ -1022,7 +1057,7 @@ Drawings: ${drawings.length}
             const name = typeof c.name === "string" ? c.name : "Collection";
 
             if (importedId === "trash" || name === "Trash") {
-              collectionIdMap.set(importedId || "trash", "trash");
+              collectionIdMap.set(importedId || "trash", trashCollectionId);
               continue;
             }
 
@@ -1071,7 +1106,7 @@ Drawings: ${drawings.length}
             const id = typeof rawCollectionId === "string" ? rawCollectionId : null;
             const name = typeof rawCollectionName === "string" ? rawCollectionName : null;
 
-            if (id === "trash" || name === "Trash") return "trash";
+            if (id === "trash" || name === "Trash") return trashCollectionId;
             if (id && collectionIdMap.has(id)) return collectionIdMap.get(id)!;
             if (name && collectionIdMap.has(`__name:${name}`)) return collectionIdMap.get(`__name:${name}`)!;
             return null;

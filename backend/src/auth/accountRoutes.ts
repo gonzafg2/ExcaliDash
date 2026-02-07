@@ -11,6 +11,7 @@ import {
   updateEmailSchema,
   updateProfileSchema,
 } from "./schemas";
+import { getTokenLookupCandidates, hashTokenForStorage } from "./tokenSecurity";
 
 type RegisterAccountRoutesDeps = {
   router: express.Router;
@@ -81,7 +82,7 @@ export const registerAccountRoutes = (deps: RegisterAccountRoutesDeps) => {
         });
 
         await prisma.passwordResetToken.create({
-          data: { userId: user.id, token: resetToken, expiresAt },
+          data: { userId: user.id, token: hashTokenForStorage(resetToken), expiresAt },
         });
 
         if (config.enableAuditLogging) {
@@ -137,8 +138,10 @@ export const registerAccountRoutes = (deps: RegisterAccountRoutesDeps) => {
       }
 
       const { token, password } = parsed.data;
-      const resetToken = await prisma.passwordResetToken.findUnique({
-        where: { token },
+      const resetToken = await prisma.passwordResetToken.findFirst({
+        where: {
+          OR: getTokenLookupCandidates(token).map((candidate) => ({ token: candidate })),
+        },
         include: { user: true },
       });
 
@@ -348,7 +351,11 @@ export const registerAccountRoutes = (deps: RegisterAccountRoutesDeps) => {
         const expiresAt = getRefreshTokenExpiresAt();
         try {
           await prisma.refreshToken.create({
-            data: { userId: updatedUser.id, token: refreshToken, expiresAt },
+            data: {
+              userId: updatedUser.id,
+              token: hashTokenForStorage(refreshToken),
+              expiresAt,
+            },
           });
         } catch {
           if (process.env.NODE_ENV === "development") {
@@ -525,7 +532,11 @@ export const registerAccountRoutes = (deps: RegisterAccountRoutesDeps) => {
         const expiresAt = getRefreshTokenExpiresAt();
         try {
           await prisma.refreshToken.create({
-            data: { userId: updatedUser.id, token: refreshToken, expiresAt },
+            data: {
+              userId: updatedUser.id,
+              token: hashTokenForStorage(refreshToken),
+              expiresAt,
+            },
           });
         } catch {
           if (process.env.NODE_ENV === "development") {

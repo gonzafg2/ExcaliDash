@@ -9,6 +9,7 @@ import {
   loginSchema,
   registerSchema,
 } from "./schemas";
+import { getTokenLookupCandidates, hashTokenForStorage } from "./tokenSecurity";
 
 type RegisterCoreRoutesDeps = {
   router: express.Router;
@@ -86,6 +87,7 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
     bootstrapUserId,
     defaultSystemConfigId,
   } = deps;
+  const getUserTrashCollectionId = (userId: string): string => `trash:${userId}`;
 
   router.post("/register", loginAttemptRateLimiter, async (req: Request, res: Response) => {
     try {
@@ -139,13 +141,14 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
           },
         });
 
-        const existingTrash = await prisma.collection.findUnique({
-          where: { id: "trash" },
+        const trashCollectionId = getUserTrashCollectionId(user.id);
+        const existingTrash = await prisma.collection.findFirst({
+          where: { id: trashCollectionId, userId: user.id },
         });
         if (!existingTrash) {
           await prisma.collection.create({
             data: {
-              id: "trash",
+              id: trashCollectionId,
               name: "Trash",
               userId: user.id,
             },
@@ -157,7 +160,7 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
         if (config.enableRefreshTokenRotation) {
           const expiresAt = getRefreshTokenExpiresAt();
           await prisma.refreshToken.create({
-            data: { userId: user.id, token: refreshToken, expiresAt },
+            data: { userId: user.id, token: hashTokenForStorage(refreshToken), expiresAt },
           });
         }
 
@@ -237,13 +240,14 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
         },
       });
 
-      const existingTrash = await prisma.collection.findUnique({
-        where: { id: "trash" },
+      const trashCollectionId = getUserTrashCollectionId(user.id);
+      const existingTrash = await prisma.collection.findFirst({
+        where: { id: trashCollectionId, userId: user.id },
       });
       if (!existingTrash) {
         await prisma.collection.create({
           data: {
-            id: "trash",
+            id: trashCollectionId,
             name: "Trash",
             userId: user.id,
           },
@@ -259,7 +263,7 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
           await prisma.refreshToken.create({
             data: {
               userId: user.id,
-              token: refreshToken,
+              token: hashTokenForStorage(refreshToken),
               expiresAt,
             },
           });
@@ -372,7 +376,7 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
           await prisma.refreshToken.create({
             data: {
               userId: user.id,
-              token: refreshToken,
+              token: hashTokenForStorage(refreshToken),
               expiresAt,
             },
           });
@@ -464,8 +468,12 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
             const expiresAt = getRefreshTokenExpiresAt();
 
             await prisma.$transaction(async (tx) => {
-              const storedToken = await tx.refreshToken.findUnique({
-                where: { token: oldRefreshToken },
+              const storedToken = await tx.refreshToken.findFirst({
+                where: {
+                  OR: getTokenLookupCandidates(oldRefreshToken).map((candidate) => ({
+                    token: candidate,
+                  })),
+                },
               });
 
               if (!storedToken || storedToken.userId !== user.id || storedToken.revoked) {
@@ -487,7 +495,7 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
               await tx.refreshToken.create({
                 data: {
                   userId: user.id,
-                  token: newRefreshToken,
+                  token: hashTokenForStorage(newRefreshToken),
                   expiresAt,
                 },
               });
@@ -638,9 +646,19 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
     }
   });
 
-  router.post("/auth-enabled", optionalAuth, async (req: Request, res: Response) => {
+  router.post("/auth-enabled", requireAuth, async (req: Request, res: Response) => {
     try {
       if (!requireCsrf(req, res)) return;
+      if (!req.user) {
+        return res
+          .status(401)
+          .json({ error: "Unauthorized", message: "User not authenticated" });
+      }
+      if (req.user.role !== "ADMIN") {
+        return res
+          .status(403)
+          .json({ error: "Forbidden", message: "Admin access required" });
+      }
 
       const parsed = authEnabledToggleSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -652,19 +670,6 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
       const systemConfig = await ensureSystemConfig();
       const current = systemConfig.authEnabled;
       const next = parsed.data.enabled;
-
-      if (current && !next) {
-        if (!req.user) {
-          return res
-            .status(401)
-            .json({ error: "Unauthorized", message: "User not authenticated" });
-        }
-        if (req.user.role !== "ADMIN") {
-          return res
-            .status(403)
-            .json({ error: "Forbidden", message: "Admin access required" });
-        }
-      }
 
       if (!current && next) {
         const bootstrap = await prisma.user.findUnique({

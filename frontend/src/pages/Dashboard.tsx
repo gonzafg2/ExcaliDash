@@ -340,7 +340,12 @@ export const Dashboard: React.FC = () => {
 
   const handleRenameDrawing = async (id: string, name: string) => {
     setDrawings(prev => prev.map(d => d.id === id ? { ...d, name } : d));
-    await api.updateDrawing(id, { name });
+    try {
+      await api.updateDrawing(id, { name });
+    } catch (err) {
+      console.error("Failed to rename drawing:", err);
+      refreshData();
+    }
   };
 
   const handleDeleteDrawing = async (id: string) => {
@@ -537,14 +542,24 @@ export const Dashboard: React.FC = () => {
   };
 
   const handleCreateCollection = async (name: string) => {
-    await api.createCollection(name);
-    const newCollections = await api.getCollections();
-    setCollections(newCollections);
+    try {
+      await api.createCollection(name);
+      const newCollections = await api.getCollections();
+      setCollections(newCollections);
+    } catch (err) {
+      console.error("Failed to create collection:", err);
+      refreshData();
+    }
   };
 
   const handleEditCollection = async (id: string, name: string) => {
     setCollections(prev => prev.map(c => c.id === id ? { ...c, name } : c));
-    await api.updateCollection(id, name);
+    try {
+      await api.updateCollection(id, name);
+    } catch (err) {
+      console.error("Failed to rename collection:", err);
+      refreshData();
+    }
   };
 
   const handleDeleteCollection = async (id: string) => {
@@ -552,8 +567,13 @@ export const Dashboard: React.FC = () => {
     if (selectedCollectionId === id) {
       setSelectedCollectionId(undefined);
     }
-    await api.deleteCollection(id);
-    refreshData();
+    try {
+      await api.deleteCollection(id);
+      refreshData();
+    } catch (err) {
+      console.error("Failed to delete collection:", err);
+      refreshData();
+    }
   };
 
   const viewTitle = React.useMemo(() => {

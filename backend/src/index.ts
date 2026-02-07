@@ -202,23 +202,32 @@ const invalidateDrawingsCache = () => {
   drawingsCache.clear();
 };
 
+const getUserTrashCollectionId = (userId: string): string => `trash:${userId}`;
+
 const ensureTrashCollection = async (
   db: Prisma.TransactionClient | PrismaClient,
   userId: string
 ): Promise<void> => {
-  const trashCollection = await db.collection.findUnique({
-    where: { id: "trash" },
+  const trashCollectionId = getUserTrashCollectionId(userId);
+  const trashCollection = await db.collection.findFirst({
+    where: { id: trashCollectionId, userId },
   });
-  
+
   if (!trashCollection) {
     await db.collection.create({
       data: {
-        id: "trash",
+        id: trashCollectionId,
         name: "Trash",
         userId,
       },
     });
   }
+
+  // Legacy migration: move this user's drawings off global "trash".
+  await db.drawing.updateMany({
+    where: { userId, collectionId: "trash" },
+    data: { collectionId: trashCollectionId },
+  });
 };
 
 setInterval(() => {
@@ -375,13 +384,109 @@ app.use(generalRateLimiter);
 
 // CSRF Protection Middleware
 // Generates a unique client ID based on IP and User-Agent for token association
-const getClientId = (req: express.Request): string => {
+const CSRF_CLIENT_COOKIE_NAME = "excalidash-csrf-client";
+const CSRF_CLIENT_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30; // 30 days
+
+const parseCookies = (cookieHeader: string | undefined): Record<string, string> => {
+  if (!cookieHeader) return {};
+  const cookies: Record<string, string> = {};
+  for (const part of cookieHeader.split(";")) {
+    const [rawKey, ...rawValueParts] = part.split("=");
+    const key = rawKey?.trim();
+    if (!key) continue;
+    const rawValue = rawValueParts.join("=").trim();
+    try {
+      cookies[key] = decodeURIComponent(rawValue);
+    } catch {
+      cookies[key] = rawValue;
+    }
+  }
+  return cookies;
+};
+
+const getCsrfClientCookieValue = (req: express.Request): string | null => {
+  const cookies = parseCookies(req.headers.cookie);
+  const value = cookies[CSRF_CLIENT_COOKIE_NAME];
+  if (!value) return null;
+  if (!/^[A-Za-z0-9_-]{16,128}$/.test(value)) return null;
+  return value;
+};
+
+const requestUsesHttps = (req: express.Request): boolean => {
+  if (req.secure) return true;
+  const forwardedProto = req.headers["x-forwarded-proto"];
+  const raw = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto;
+  const firstHop = String(raw || "")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+  return firstHop === "https";
+};
+
+const setCsrfClientCookie = (req: express.Request, res: express.Response, value: string): void => {
+  const secure = requestUsesHttps(req) ? "; Secure" : "";
+  res.append(
+    "Set-Cookie",
+    `${CSRF_CLIENT_COOKIE_NAME}=${encodeURIComponent(
+      value
+    )}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${CSRF_CLIENT_COOKIE_MAX_AGE_SECONDS}${secure}`
+  );
+};
+
+const getLegacyClientId = (req: express.Request): string => {
   const ip = req.ip || req.connection.remoteAddress || "unknown";
   const userAgent = req.headers["user-agent"] || "unknown";
-  const clientId = `${ip}:${userAgent}`.slice(0, 256);
+  return `${ip}:${userAgent}`.slice(0, 256);
+};
+
+const getClientIdForTokenIssue = (
+  req: express.Request,
+  res: express.Response
+): { clientId: string; strategy: "cookie" | "legacy-bootstrap" } => {
+  const existingCookieValue = getCsrfClientCookieValue(req);
+  if (existingCookieValue) {
+    return {
+      clientId: `cookie:${existingCookieValue}`,
+      strategy: "cookie",
+    };
+  }
+
+  // No cookie presented by client yet:
+  // - issue a token bound to legacy identity for compatibility with non-cookie clients
+  // - still set a cookie so subsequent browser requests can transition to cookie-bound tokens
+  const generatedCookieValue = uuidv4().replace(/-/g, "");
+  setCsrfClientCookie(req, res, generatedCookieValue);
+  return {
+    clientId: getLegacyClientId(req),
+    strategy: "legacy-bootstrap",
+  };
+};
+
+const getClientIdCandidatesForValidation = (req: express.Request): string[] => {
+  const candidates: string[] = [];
+  const cookieValue = getCsrfClientCookieValue(req);
+  if (cookieValue) {
+    candidates.push(`cookie:${cookieValue}`);
+  }
+
+  const legacyClientId = getLegacyClientId(req);
+  if (!candidates.includes(legacyClientId)) {
+    candidates.push(legacyClientId);
+  }
+
+  return candidates;
+};
+
+const getClientIdForTokenIssueDebug = (
+  req: express.Request,
+  res: express.Response
+): string => {
+  const { clientId, strategy } = getClientIdForTokenIssue(req, res);
 
   // Debug logging for CSRF troubleshooting (issue #38)
   if (process.env.DEBUG_CSRF === "true") {
+    const validationCandidates = getClientIdCandidatesForValidation(req);
+    const ip = req.ip || req.connection.remoteAddress || "unknown";
     console.log("[CSRF DEBUG] getClientId", {
       method: req.method,
       path: req.path,
@@ -389,9 +494,13 @@ const getClientId = (req: express.Request): string => {
       remoteAddress: req.connection.remoteAddress,
       "x-forwarded-for": req.headers["x-forwarded-for"],
       "x-real-ip": req.headers["x-real-ip"],
-      userAgent: userAgent.slice(0, 100),
+      hasCsrfCookie: Boolean(getCsrfClientCookieValue(req)),
       clientIdPreview: clientId.slice(0, 60) + "...",
       trustProxySetting: req.app.get("trust proxy"),
+      strategy,
+      validationCandidatesPreview: validationCandidates.map((candidate) =>
+        `${candidate.slice(0, 60)}...`
+      ),
     });
   }
 
@@ -436,7 +545,7 @@ app.get("/csrf-token", (req, res) => {
     }
   }
 
-  const clientId = getClientId(req);
+  const clientId = getClientIdForTokenIssueDebug(req, res);
   const token = createCsrfToken(clientId);
 
   res.json({
@@ -487,7 +596,7 @@ const csrfProtectionMiddleware = (
   // Some legitimate clients/proxies might strip these, so we don't block strictly on their absence,
   // but relying on the token is the primary defense.
 
-  const clientId = getClientId(req);
+  const clientIdCandidates = getClientIdCandidatesForValidation(req);
   const headerName = getCsrfTokenHeader();
   const tokenHeader = req.headers[headerName];
   const token = Array.isArray(tokenHeader) ? tokenHeader[0] : tokenHeader;
@@ -499,7 +608,10 @@ const csrfProtectionMiddleware = (
     });
   }
 
-  if (!validateCsrfToken(clientId, token)) {
+  const isValidToken = clientIdCandidates.some((clientId) =>
+    validateCsrfToken(clientId, token)
+  );
+  if (!isValidToken) {
     return res.status(403).json({
       error: "CSRF token invalid",
       message: "Invalid or expired CSRF token. Please refresh and try again.",
@@ -555,52 +667,71 @@ const drawingCreateSchema = drawingBaseSchema
     }
   );
 
-const drawingUpdateSchema = drawingBaseSchema
+const drawingUpdateSchemaBase = drawingBaseSchema
   .extend({
     elements: elementSchema.array().optional(),
     appState: appStateSchema.optional(),
     files: filesFieldSchema,
     version: z.number().int().positive().optional(),
-  })
-  .refine(
-    (data) => {
-      const needsSanitization =
-        data.elements !== undefined ||
-        data.appState !== undefined ||
-        data.files !== undefined ||
-        data.preview !== undefined;
+  });
 
-      try {
-        const sanitizedData = { ...data };
-        if (needsSanitization) {
-          const fullData = {
-            elements: Array.isArray(data.elements) ? data.elements : [],
-            appState:
-              typeof data.appState === "object" && data.appState !== null
-                ? data.appState
-                : {},
-            files: data.files || {},
-            preview: data.preview,
-            name: data.name,
-            collectionId: data.collectionId,
-          };
-          const sanitized = sanitizeDrawingData(fullData);
-          sanitizedData.elements = sanitized.elements;
-          sanitizedData.appState = sanitized.appState;
-          if (data.files !== undefined) sanitizedData.files = sanitized.files;
-          if (data.preview !== undefined)
-            sanitizedData.preview = sanitized.preview;
-          Object.assign(data, sanitizedData);
-        }
-        return true;
-      } catch (error) {
-        console.error("Sanitization failed:", error);
-        if (!needsSanitization) {
-          return true;
-        }
-        return false;
-      }
-    },
+export const sanitizeDrawingUpdateData = (
+  data: {
+    elements?: unknown[];
+    appState?: Record<string, unknown>;
+    files?: Record<string, unknown>;
+    preview?: string | null;
+    name?: string;
+    collectionId?: string | null;
+  }
+): boolean => {
+  const hasSceneFields =
+    data.elements !== undefined ||
+    data.appState !== undefined ||
+    data.files !== undefined;
+  const hasPreviewField = data.preview !== undefined;
+  const needsSanitization = hasSceneFields || hasPreviewField;
+
+  try {
+    const sanitizedData = { ...data };
+    if (hasSceneFields) {
+      const fullData = {
+        elements: Array.isArray(data.elements) ? data.elements : [],
+        appState:
+          typeof data.appState === "object" && data.appState !== null
+            ? data.appState
+            : {},
+        files: data.files || {},
+        preview: data.preview,
+        name: data.name,
+        collectionId: data.collectionId,
+      };
+      const sanitized = sanitizeDrawingData(fullData);
+      sanitizedData.elements = sanitized.elements;
+      sanitizedData.appState = sanitized.appState;
+      if (data.files !== undefined) sanitizedData.files = sanitized.files;
+      if (data.preview !== undefined) sanitizedData.preview = sanitized.preview;
+      Object.assign(data, sanitizedData);
+    } else if (hasPreviewField && typeof data.preview === "string") {
+      // Preview-only updates must not inject default scene fields.
+      data.preview = sanitizeSvg(data.preview);
+      Object.assign(data, { ...data, preview: data.preview });
+    } else if (hasPreviewField && data.preview === null) {
+      // Explicitly allow clearing preview without touching scene data.
+      Object.assign(data, sanitizedData);
+    }
+    return true;
+  } catch (error) {
+    console.error("Sanitization failed:", error);
+    if (!needsSanitization) {
+      return true;
+    }
+    return false;
+  }
+};
+
+const drawingUpdateSchema = drawingUpdateSchemaBase.refine(
+    (data) => sanitizeDrawingUpdateData(data as any),
     {
       message: "Invalid or malicious drawing data detected",
     }
@@ -726,6 +857,33 @@ const roomUsers = new Map<string, User[]>();
 // Track which authenticated user owns each socket for authorization checks
 const socketUserMap = new Map<string, string>();
 
+const toPresenceName = (value: unknown): string => {
+  if (typeof value !== "string") return "User";
+  const trimmed = value.trim().slice(0, 120);
+  return trimmed.length > 0 ? trimmed : "User";
+};
+
+const toPresenceInitials = (name: string): string => {
+  const words = name
+    .split(/\s+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  if (words.length === 0) return "U";
+  const first = words[0]?.[0] ?? "";
+  const second = words.length > 1 ? words[1]?.[0] ?? "" : "";
+  const initials = `${first}${second}`.toUpperCase().slice(0, 2);
+  return initials.length > 0 ? initials : "U";
+};
+
+const toPresenceColor = (value: unknown): string => {
+  if (typeof value !== "string") return "#4f46e5";
+  const trimmed = value.trim();
+  if (/^#[0-9a-fA-F]{3,8}$/.test(trimmed)) {
+    return trimmed;
+  }
+  return "#4f46e5";
+};
+
 /**
  * Verify JWT from Socket.io auth and check if auth is required.
  * When auth is disabled (single-user mode), all connections are allowed.
@@ -815,10 +973,35 @@ io.on("connection", (socket) => {
         socket.join(roomId);
         authorizedDrawingIds.add(drawingId);
 
-        const newUser: User = { ...user, socketId: socket.id, isActive: true };
+        let trustedUserId =
+          typeof user?.id === "string" && user.id.trim().length > 0
+            ? user.id.trim().slice(0, 200)
+            : socket.id;
+        let trustedName = toPresenceName(user?.name);
+
+        // In auth-enabled mode, identity should come from the authenticated account.
+        if (authenticatedUserId && authenticatedUserId !== "bootstrap-admin") {
+          const account = await prisma.user.findUnique({
+            where: { id: authenticatedUserId },
+            select: { id: true, name: true },
+          });
+          if (account) {
+            trustedUserId = account.id;
+            trustedName = toPresenceName(account.name);
+          }
+        }
+
+        const newUser: User = {
+          id: trustedUserId,
+          name: trustedName,
+          initials: toPresenceInitials(trustedName),
+          color: toPresenceColor(user?.color),
+          socketId: socket.id,
+          isActive: true,
+        };
 
         const currentUsers = roomUsers.get(roomId) || [];
-        const filteredUsers = currentUsers.filter((u) => u.id !== user.id);
+        const filteredUsers = currentUsers.filter((u) => u.id !== newUser.id);
         filteredUsers.push(newUser);
         roomUsers.set(roomId, filteredUsers);
 

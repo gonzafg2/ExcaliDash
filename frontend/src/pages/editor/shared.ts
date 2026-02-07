@@ -32,6 +32,37 @@ export const isSuspiciousEmptySnapshot = (
   return hasRenderableElements(previousPersisted);
 };
 
+/**
+ * Detects a stale empty snapshot that is older than the current in-memory scene.
+ * This prevents race conditions where an outdated empty `onChange` event can
+ * overwrite a newer non-empty scene.
+ */
+export const isStaleEmptySnapshot = (
+  latestSnapshot: readonly any[] = [],
+  candidateSnapshot: readonly any[] = []
+): boolean => {
+  if (!Array.isArray(candidateSnapshot) || candidateSnapshot.length > 0) return false;
+  if (!hasRenderableElements(latestSnapshot)) return false;
+  return !haveSameElements(latestSnapshot, candidateSnapshot);
+};
+
+/**
+ * Detects a stale snapshot that has no renderable elements while the latest
+ * in-memory scene still has renderable content.
+ *
+ * This covers cases where Excalidraw emits a transient non-renderable scene
+ * (e.g. hydration race) that should not overwrite newer content.
+ */
+export const isStaleNonRenderableSnapshot = (
+  latestSnapshot: readonly any[] = [],
+  candidateSnapshot: readonly any[] = []
+): boolean => {
+  if (!Array.isArray(candidateSnapshot)) return false;
+  if (hasRenderableElements(candidateSnapshot)) return false;
+  if (!hasRenderableElements(latestSnapshot)) return false;
+  return !haveSameElements(latestSnapshot, candidateSnapshot);
+};
+
 const buildFileSignature = (file: any): string => {
   const mimeType = typeof file?.mimeType === "string" ? file.mimeType : "";
   const id = typeof file?.id === "string" ? file.id : "";

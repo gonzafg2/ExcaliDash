@@ -11,6 +11,7 @@ import {
   loginRateLimitUpdateSchema,
   registrationToggleSchema,
 } from "./schemas";
+import { hashTokenForStorage } from "./tokenSecurity";
 
 type RegisterAdminRoutesDeps = {
   router: express.Router;
@@ -610,7 +611,7 @@ export const registerAdminRoutes = (deps: RegisterAdminRoutesDeps) => {
         const expiresAt = getRefreshTokenExpiresAt();
         try {
           await prisma.refreshToken.create({
-            data: { userId: target.id, token: refreshToken, expiresAt },
+            data: { userId: target.id, token: hashTokenForStorage(refreshToken), expiresAt },
           });
         } catch {
           if (process.env.NODE_ENV === "development") {

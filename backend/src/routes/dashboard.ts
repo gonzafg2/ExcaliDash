@@ -79,11 +79,30 @@ export const registerDashboardRoutes = (
     logAuditEvent,
   } = deps;
 
+  const getUserTrashCollectionId = (userId: string): string => `trash:${userId}`;
+  const isTrashCollectionId = (
+    collectionId: string | null | undefined,
+    userId: string
+  ): boolean =>
+    Boolean(collectionId) &&
+    (collectionId === "trash" || collectionId === getUserTrashCollectionId(userId));
+  const toInternalTrashCollectionId = (
+    collectionId: string | null | undefined,
+    userId: string
+  ): string | null | undefined =>
+    collectionId === "trash" ? getUserTrashCollectionId(userId) : collectionId;
+  const toPublicTrashCollectionId = (
+    collectionId: string | null | undefined,
+    userId: string
+  ): string | null | undefined =>
+    isTrashCollectionId(collectionId, userId) ? "trash" : collectionId;
+
   app.get("/drawings", requireAuth, asyncHandler(async (req, res) => {
     if (!req.user) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
+    const trashCollectionId = getUserTrashCollectionId(req.user.id);
     const { search, collectionId, includeData, limit, offset, sortField, sortDirection } = req.query;
     const where: Prisma.DrawingWhereInput = { userId: req.user.id };
     const searchTerm =
@@ -100,7 +119,7 @@ export const registerDashboardRoutes = (
     } else if (collectionId) {
       const normalizedCollectionId = String(collectionId);
       if (normalizedCollectionId === "trash") {
-        where.collectionId = "trash";
+        where.collectionId = { in: [trashCollectionId, "trash"] };
         collectionFilterKey = "trash";
       } else {
         const collection = await prisma.collection.findFirst({
@@ -113,7 +132,10 @@ export const registerDashboardRoutes = (
         collectionFilterKey = `id:${normalizedCollectionId}`;
       }
     } else {
-      where.OR = [{ collectionId: { not: "trash" } }, { collectionId: null }];
+      where.OR = [
+        { collectionId: { notIn: [trashCollectionId, "trash"] } },
+        { collectionId: null },
+      ];
     }
 
     const shouldIncludeData =
@@ -188,9 +210,15 @@ export const registerDashboardRoutes = (
     if (shouldIncludeData) {
       responsePayload = (drawings as any[]).map((d: any) => ({
         ...d,
+        collectionId: toPublicTrashCollectionId(d.collectionId, req.user!.id),
         elements: parseJsonField(d.elements, []),
         appState: parseJsonField(d.appState, {}),
         files: parseJsonField(d.files, {}),
+      }));
+    } else {
+      responsePayload = (drawings as any[]).map((d: any) => ({
+        ...d,
+        collectionId: toPublicTrashCollectionId(d.collectionId, req.user!.id),
       }));
     }
 
@@ -223,6 +251,7 @@ export const registerDashboardRoutes = (
 
     return res.json({
       ...drawing,
+      collectionId: toPublicTrashCollectionId(drawing.collectionId, req.user.id),
       elements: parseJsonField(drawing.elements, []),
       appState: parseJsonField(drawing.appState, {}),
       files: parseJsonField(drawing.files, {}),
@@ -254,14 +283,16 @@ export const registerDashboardRoutes = (
       files?: Record<string, unknown>;
     };
     const drawingName = payload.name ?? "Untitled Drawing";
-    const targetCollectionId = payload.collectionId === undefined ? null : payload.collectionId;
+    const targetCollectionIdRaw = payload.collectionId === undefined ? null : payload.collectionId;
+    const targetCollectionId =
+      toInternalTrashCollectionId(targetCollectionIdRaw, req.user.id) ?? null;
 
-    if (targetCollectionId && targetCollectionId !== "trash") {
+    if (targetCollectionId && !isTrashCollectionId(targetCollectionId, req.user.id)) {
       const collection = await prisma.collection.findFirst({
         where: { id: targetCollectionId, userId: req.user.id },
       });
       if (!collection) return res.status(404).json({ error: "Collection not found" });
-    } else if (targetCollectionId === "trash") {
+    } else if (targetCollectionIdRaw === "trash") {
       await ensureTrashCollection(prisma, req.user.id);
     }
 
@@ -280,6 +311,7 @@ export const registerDashboardRoutes = (
 
     return res.json({
       ...newDrawing,
+      collectionId: toPublicTrashCollectionId(newDrawing.collectionId, req.user.id),
       elements: parseJsonField(newDrawing.elements, []),
       appState: parseJsonField(newDrawing.appState, {}),
       files: parseJsonField(newDrawing.files, {}),
@@ -312,11 +344,14 @@ export const registerDashboardRoutes = (
       files?: Record<string, unknown>;
       version?: number;
     };
+    const trashCollectionId = getUserTrashCollectionId(req.user.id);
     const isSceneUpdate =
       payload.elements !== undefined ||
       payload.appState !== undefined ||
       payload.files !== undefined;
-    const data: Prisma.DrawingUpdateInput = { version: { increment: 1 } };
+    const data: Prisma.DrawingUpdateInput = isSceneUpdate
+      ? { version: { increment: 1 } }
+      : {};
 
     if (payload.name !== undefined) data.name = payload.name;
     if (payload.elements !== undefined) data.elements = JSON.stringify(payload.elements);
@@ -327,7 +362,7 @@ export const registerDashboardRoutes = (
     if (payload.collectionId !== undefined) {
       if (payload.collectionId === "trash") {
         await ensureTrashCollection(prisma, req.user.id);
-        (data as Prisma.DrawingUncheckedUpdateInput).collectionId = "trash";
+        (data as Prisma.DrawingUncheckedUpdateInput).collectionId = trashCollectionId;
       } else if (payload.collectionId) {
         const collection = await prisma.collection.findFirst({
           where: { id: payload.collectionId, userId: req.user.id },
@@ -374,6 +409,7 @@ export const registerDashboardRoutes = (
 
     return res.json({
       ...updatedDrawing,
+      collectionId: toPublicTrashCollectionId(updatedDrawing.collectionId, req.user.id),
       elements: parseJsonField(updatedDrawing.elements, []),
       appState: parseJsonField(updatedDrawing.appState, {}),
       files: parseJsonField(updatedDrawing.files, {}),
@@ -415,8 +451,10 @@ export const registerDashboardRoutes = (
     const { id } = req.params;
     const original = await prisma.drawing.findFirst({ where: { id, userId: req.user.id } });
     if (!original) return res.status(404).json({ error: "Original drawing not found" });
-    if (original.collectionId === "trash") {
+    let duplicatedCollectionId = original.collectionId;
+    if (isTrashCollectionId(original.collectionId, req.user.id)) {
       await ensureTrashCollection(prisma, req.user.id);
+      duplicatedCollectionId = getUserTrashCollectionId(req.user.id);
     }
 
     const newDrawing = await prisma.drawing.create({
@@ -426,7 +464,7 @@ export const registerDashboardRoutes = (
         appState: original.appState,
         files: original.files,
         userId: req.user.id,
-        collectionId: original.collectionId,
+        collectionId: duplicatedCollectionId,
         version: 1,
       },
     });
@@ -434,6 +472,7 @@ export const registerDashboardRoutes = (
 
     return res.json({
       ...newDrawing,
+      collectionId: toPublicTrashCollectionId(newDrawing.collectionId, req.user.id),
       elements: parseJsonField(newDrawing.elements, []),
       appState: parseJsonField(newDrawing.appState, {}),
       files: parseJsonField(newDrawing.files, {}),
@@ -442,11 +481,21 @@ export const registerDashboardRoutes = (
 
   app.get("/collections", requireAuth, asyncHandler(async (req, res) => {
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    const trashCollectionId = getUserTrashCollectionId(req.user.id);
+    await ensureTrashCollection(prisma, req.user.id);
 
-    const collections = await prisma.collection.findMany({
+    const rawCollections = await prisma.collection.findMany({
       where: { userId: req.user.id },
       orderBy: { createdAt: "desc" },
     });
+    const hasInternalTrash = rawCollections.some((collection) => collection.id === trashCollectionId);
+    const collections = rawCollections
+      .filter((collection) => !(hasInternalTrash && collection.id === "trash"))
+      .map((collection) =>
+        collection.id === trashCollectionId
+          ? { ...collection, id: "trash", name: "Trash" }
+          : collection
+      );
     return res.json(collections);
   }));
 
@@ -472,6 +521,12 @@ export const registerDashboardRoutes = (
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
 
     const { id } = req.params;
+    if (isTrashCollectionId(id, req.user.id)) {
+      return res.status(400).json({
+        error: "Validation error",
+        message: "Trash collection cannot be renamed",
+      });
+    }
     const existingCollection = await prisma.collection.findFirst({
       where: { id, userId: req.user.id },
     });
@@ -506,6 +561,12 @@ export const registerDashboardRoutes = (
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
 
     const { id } = req.params;
+    if (isTrashCollectionId(id, req.user.id)) {
+      return res.status(400).json({
+        error: "Validation error",
+        message: "Trash collection cannot be deleted",
+      });
+    }
     const collection = await prisma.collection.findFirst({
       where: { id, userId: req.user.id },
     });

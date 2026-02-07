@@ -2,6 +2,7 @@
 set -e
 
 JWT_SECRET_FILE="/app/prisma/.jwt_secret"
+CSRF_SECRET_FILE="/app/prisma/.csrf_secret"
 
 # Ensure JWT secret exists for production startup.
 # Backward compatibility: older installs may not have JWT_SECRET configured.
@@ -25,6 +26,27 @@ fi
 
 export JWT_SECRET
 
+# Ensure CSRF secret exists for stable token validation across restarts.
+# (Still recommend setting explicitly for multi-instance deployments.)
+if [ -z "${CSRF_SECRET:-}" ]; then
+    echo "CSRF_SECRET not provided, resolving persisted secret..."
+    if [ -f "${CSRF_SECRET_FILE}" ]; then
+        CSRF_SECRET="$(tr -d '\r\n' < "${CSRF_SECRET_FILE}")"
+    fi
+
+    if [ -z "${CSRF_SECRET}" ]; then
+        echo "No persisted CSRF secret found. Generating a new secret..."
+        CSRF_SECRET="$(openssl rand -base64 32)"
+        umask 077
+        printf "%s" "${CSRF_SECRET}" > "${CSRF_SECRET_FILE}"
+    fi
+else
+    umask 077
+    printf "%s" "${CSRF_SECRET}" > "${CSRF_SECRET_FILE}"
+fi
+
+export CSRF_SECRET
+
 # 1. Hydrate volume if empty (Running as root)
 if [ ! -f "/app/prisma/schema.prisma" ]; then
     echo "Mount is empty. Hydrating /app/prisma..."
@@ -43,11 +65,12 @@ chown -R nodejs:nodejs /app/uploads
 chown -R nodejs:nodejs /app/prisma
 chmod 755 /app/uploads
 chmod 600 "${JWT_SECRET_FILE}"
+chmod 600 "${CSRF_SECRET_FILE}"
 
 # Ensure database file has proper permissions
 if [ -f "/app/prisma/dev.db" ]; then
     echo "Database file found, ensuring write permissions..."
-    chmod 666 /app/prisma/dev.db
+    chmod 600 /app/prisma/dev.db
 fi
 
 # 3. Run Migrations (Drop privileges to nodejs)

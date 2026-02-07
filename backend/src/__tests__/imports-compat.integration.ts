@@ -345,7 +345,9 @@ describe("Import compatibility (legacy exports)", () => {
       expect.arrayContaining(["legacy-drawing-1", "legacy-drawing-2", "legacy-drawing-trash"])
     );
 
-    const trash = await prisma.collection.findUnique({ where: { id: "trash" } });
+    const trash = await prisma.collection.findUnique({
+      where: { id: "trash:bootstrap-admin" },
+    });
     expect(trash).toBeTruthy();
   });
 

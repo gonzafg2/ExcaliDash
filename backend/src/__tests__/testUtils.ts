@@ -98,11 +98,9 @@ export const setupTestDb = () => {
  * Clean up the test database between tests
  */
 export const cleanupTestDb = async (prisma: PrismaClient) => {
-  // Delete all drawings and collections (except Trash)
+  // Delete all drawings and collections.
   await prisma.drawing.deleteMany({});
-  await prisma.collection.deleteMany({
-    where: { id: { not: "trash" } },
-  });
+  await prisma.collection.deleteMany({});
 };
 
 /**
@@ -129,14 +127,15 @@ export const createTestUser = async (prisma: PrismaClient, email: string = "test
 export const initTestDb = async (prisma: PrismaClient) => {
   // Create a test user first
   const testUser = await createTestUser(prisma);
+  const trashCollectionId = `trash:${testUser.id}`;
   
   // Ensure Trash collection exists
-  const trash = await prisma.collection.findUnique({
-    where: { id: "trash" },
+  const trash = await prisma.collection.findFirst({
+    where: { id: trashCollectionId, userId: testUser.id },
   });
   if (!trash) {
     await prisma.collection.create({
-      data: { id: "trash", name: "Trash", userId: testUser.id },
+      data: { id: trashCollectionId, name: "Trash", userId: testUser.id },
     });
   }
   

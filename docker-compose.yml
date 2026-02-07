@@ -12,8 +12,7 @@ services:
       # if unset, backend auto-generates and persists one in the volume.
       # Recommended to set explicitly for portability and multi-instance setups.
       - JWT_SECRET=${JWT_SECRET}
-      # Required for horizontal scaling (k8s): uncomment and set to same value on all instances
-      # - CSRF_SECRET=${CSRF_SECRET}
+      - CSRF_SECRET=${CSRF_SECRET}
     volumes:
       - backend-data:/app/prisma
     networks:
