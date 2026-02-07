@@ -99,6 +99,8 @@ docker compose -f docker-compose.prod.yml up -d
 # Access the frontend at localhost:6767
 ```
 
+For single-container deployments, `JWT_SECRET` can be omitted and will be auto-generated and persisted in the backend volume on first start. For portability and all multi-instance deployments, set a fixed `JWT_SECRET` explicitly.
+
 ## Docker Build
 
 [Install Docker](https://docs.docker.com/desktop/)
@@ -141,7 +143,7 @@ frontend:
 
 ### Multi-Container / Kubernetes Deployments
 
-When running multiple backend replicas (e.g., Kubernetes, Docker Swarm, or load-balanced containers), you **must** set the `CSRF_SECRET` environment variable to the same value across all instances.
+When running multiple backend replicas (e.g., Kubernetes, Docker Swarm, or load-balanced containers), you **must** set both `JWT_SECRET` and `CSRF_SECRET` to the same values across all instances.
 
 ```bash
 # Generate a secure secret
@@ -152,6 +154,7 @@ openssl rand -base64 32
 # docker-compose.yml or k8s deployment
 backend:
   environment:
+    - JWT_SECRET=your-generated-jwt-secret-here
     - CSRF_SECRET=your-generated-secret-here
 ```
 
