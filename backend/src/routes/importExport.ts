@@ -164,10 +164,10 @@ const isPathInsideDirectory = (candidatePath: string, rootDir: string): boolean 
 };
 
 const isSafeMulterTempFilename = (value: string): boolean =>
-  /^[a-f0-9]{32}$/i.test(value);
+  /^[a-f0-9]{32}$/.test(value);
 
 const resolveSafeUploadedFilePath = async (
-  fileMeta: { filename?: unknown; destination?: unknown },
+  fileMeta: { filename?: unknown },
   uploadRoot: string
 ): Promise<string> => {
   const absoluteUploadRoot = path.resolve(uploadRoot);
@@ -177,17 +177,6 @@ const resolveSafeUploadedFilePath = async (
     canonicalUploadRoot = await fsPromises.realpath(absoluteUploadRoot);
   } catch {
     throw new ImportValidationError("Invalid upload path");
-  }
-
-  if (typeof fileMeta.destination === "string" && fileMeta.destination.trim().length > 0) {
-    try {
-      const canonicalDestination = await fsPromises.realpath(path.resolve(fileMeta.destination));
-      if (canonicalDestination !== canonicalUploadRoot) {
-        throw new ImportValidationError("Invalid upload path");
-      }
-    } catch {
-      throw new ImportValidationError("Invalid upload path");
-    }
   }
 
   const filename = typeof fileMeta.filename === "string" ? fileMeta.filename : "";
@@ -200,18 +189,7 @@ const resolveSafeUploadedFilePath = async (
     throw new ImportValidationError("Invalid upload path");
   }
 
-  let canonicalFilePath = joinedPath;
-  try {
-    canonicalFilePath = await fsPromises.realpath(joinedPath);
-  } catch {
-    throw new ImportValidationError("Invalid upload path");
-  }
-
-  if (!isPathInsideDirectory(canonicalFilePath, canonicalUploadRoot)) {
-    throw new ImportValidationError("Invalid upload path");
-  }
-
-  return canonicalFilePath;
+  return joinedPath;
 };
 
 const openReadonlySqliteDb = (filePath: string): any => {
@@ -401,7 +379,7 @@ Drawings: ${drawings.length}
     let stagedPath: string;
     try {
       stagedPath = await resolveSafeUploadedFilePath(
-        { filename: req.file.filename, destination: req.file.destination },
+        { filename: req.file.filename },
         uploadDir
       );
     } catch (error) {
@@ -492,7 +470,7 @@ Drawings: ${drawings.length}
     let stagedPath: string;
     try {
       stagedPath = await resolveSafeUploadedFilePath(
-        { filename: req.file.filename, destination: req.file.destination },
+        { filename: req.file.filename },
         uploadDir
       );
     } catch (error) {
@@ -752,7 +730,7 @@ Drawings: ${drawings.length}
     let stagedPath: string;
     try {
       stagedPath = await resolveSafeUploadedFilePath(
-        { filename: req.file.filename, destination: req.file.destination },
+        { filename: req.file.filename },
         uploadDir
       );
     } catch (error) {
@@ -841,7 +819,7 @@ Drawings: ${drawings.length}
     let stagedPath: string;
     try {
       stagedPath = await resolveSafeUploadedFilePath(
-        { filename: req.file.filename, destination: req.file.destination },
+        { filename: req.file.filename },
         uploadDir
       );
     } catch (error) {
