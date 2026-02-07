@@ -106,7 +106,13 @@ const getSecureRandomInt = (maxExclusive: number): number => {
     cryptoObj.getRandomValues(buffer);
     return buffer[0] % maxExclusive;
   }
-  const seed = `${Date.now().toString(16)}:${performance.now().toString(16)}`;
+  const perfNow =
+    typeof globalThis !== "undefined" &&
+    typeof globalThis.performance !== "undefined" &&
+    typeof globalThis.performance.now === "function"
+      ? globalThis.performance.now()
+      : 0;
+  const seed = `${Date.now().toString(16)}:${perfNow.toString(16)}`;
   return hashString(seed) % maxExclusive;
 };
 
@@ -129,7 +135,13 @@ const generateClientId = (): string => {
   }
 
   // Final fallback for very old browsers; uniqueness window-scoped only.
-  const entropy = `${Date.now().toString(16)}-${performance.now().toString(16)}-${getSecureRandomInt(1_000_000_000).toString(16)}`;
+  const perfNow =
+    typeof globalThis !== "undefined" &&
+    typeof globalThis.performance !== "undefined" &&
+    typeof globalThis.performance.now === "function"
+      ? globalThis.performance.now()
+      : 0;
+  const entropy = `${Date.now().toString(16)}-${perfNow.toString(16)}-${getSecureRandomInt(1_000_000_000).toString(16)}`;
   return `id-${hashString(entropy).toString(16)}-${hashString(`${entropy}:2`).toString(16)}`;
 };
 
@@ -152,12 +164,30 @@ export const getFingerprintInitials = (seed?: string): string => {
 export const getUserIdentity = (): UserIdentity => {
   const stored = localStorage.getItem("excalidash-user-id");
   if (stored) {
-    const parsed = JSON.parse(stored) as UserIdentity;
-    if (!parsed.initials || parsed.initials.length !== 2) {
-      parsed.initials = getFingerprintInitials(parsed.id);
-      localStorage.setItem("excalidash-user-id", JSON.stringify(parsed));
+    try {
+      const parsed = JSON.parse(stored) as Partial<UserIdentity>;
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        typeof parsed.id === "string" &&
+        typeof parsed.name === "string" &&
+        typeof parsed.color === "string"
+      ) {
+        const normalized: UserIdentity = {
+          id: parsed.id,
+          name: parsed.name,
+          color: parsed.color,
+          initials:
+            typeof parsed.initials === "string" && parsed.initials.length === 2
+              ? parsed.initials
+              : getFingerprintInitials(parsed.id),
+        };
+        localStorage.setItem("excalidash-user-id", JSON.stringify(normalized));
+        return normalized;
+      }
+    } catch {
+      // Fall through to regenerate identity.
     }
-    return parsed;
   }
 
   const deviceId = getOrCreateBrowserFingerprint();

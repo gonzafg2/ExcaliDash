@@ -211,16 +211,14 @@ export const registerDashboardRoutes = (
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
 
     const { id } = req.params;
-    const drawing = await prisma.drawing.findUnique({ where: { id } });
+    const drawing = await prisma.drawing.findFirst({
+      where: {
+        id,
+        userId: req.user.id,
+      },
+    });
     if (!drawing) {
       return res.status(404).json({ error: "Drawing not found", message: "Drawing does not exist" });
-    }
-    if (drawing.userId !== req.user.id) {
-      return res.status(403).json({
-        error: "Forbidden",
-        code: "DRAWING_ACCESS_DENIED",
-        message: "You do not have access to this drawing",
-      });
     }
 
     return res.json({

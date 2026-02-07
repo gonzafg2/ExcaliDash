@@ -13,7 +13,7 @@ type AuthEnabledCache = {
 };
 
 let authEnabledCache: AuthEnabledCache | null = null;
-const AUTH_ENABLED_TTL_MS = 0;
+const AUTH_ENABLED_TTL_MS = 5000;
 
 const getAuthEnabled = async (): Promise<boolean> => {
   const now = Date.now();
@@ -21,16 +21,32 @@ const getAuthEnabled = async (): Promise<boolean> => {
     return authEnabledCache.value;
   }
 
-  const systemConfig = await prisma.systemConfig.upsert({
+  let systemConfig = await prisma.systemConfig.findUnique({
     where: { id: DEFAULT_SYSTEM_CONFIG_ID },
-    update: {},
-    create: {
-      id: DEFAULT_SYSTEM_CONFIG_ID,
-      authEnabled: false,
-      registrationEnabled: false,
-    },
     select: { authEnabled: true },
   });
+
+  if (!systemConfig) {
+    try {
+      systemConfig = await prisma.systemConfig.create({
+        data: {
+          id: DEFAULT_SYSTEM_CONFIG_ID,
+          authEnabled: false,
+          registrationEnabled: false,
+        },
+        select: { authEnabled: true },
+      });
+    } catch {
+      // Handle race from concurrent initialization.
+      systemConfig = await prisma.systemConfig.findUnique({
+        where: { id: DEFAULT_SYSTEM_CONFIG_ID },
+        select: { authEnabled: true },
+      });
+      if (!systemConfig) {
+        throw new Error("Failed to initialize system config");
+      }
+    }
+  }
 
   authEnabledCache = { value: systemConfig.authEnabled, fetchedAt: now };
   return systemConfig.authEnabled;

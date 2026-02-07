@@ -1,7 +1,7 @@
 import express, { Request, Response } from "express";
 import bcrypt from "bcrypt";
 import jwt, { SignOptions } from "jsonwebtoken";
-import { PrismaClient, Prisma } from "../generated/client";
+import { PrismaClient } from "../generated/client";
 import { StringValue } from "ms";
 import { logAuditEvent } from "../utils/audit";
 import {

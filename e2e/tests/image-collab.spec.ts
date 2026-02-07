@@ -1,4 +1,4 @@
-import { test, expect, type Page, type BrowserContext } from "@playwright/test";
+import { test, expect, type BrowserContext } from "@playwright/test";
 import { createDrawing, deleteDrawing, getDrawing, updateDrawing } from "./helpers/api";
 
 /**
@@ -11,16 +11,6 @@ import { createDrawing, deleteDrawing, getDrawing, updateDrawing } from "./helpe
  * the test deterministic and to specifically model the async "element first,
  * file data later" behavior seen with paste/import.
  */
-
-const waitForEditorReady = async (page: Page) => {
-  await page.goto(page.url() || "/");
-  // Excalidraw renders a canvas; this is our "loaded" signal.
-  await page.waitForSelector("[class*='excalidraw'], canvas", { timeout: 15000 });
-  await page.waitForFunction(() => {
-    // @ts-expect-error - injected in dev build
-    return !!(window as any).__EXCALIDASH_EXCALIDRAW_API__;
-  });
-};
 
 const openEditorTab = async (context: BrowserContext, drawingId: string) => {
   const page = await context.newPage();
@@ -249,4 +239,3 @@ test.describe("Issue #25 - image sync + deletion across tabs", () => {
     await context.close();
   });
 });
-

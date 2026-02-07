@@ -908,7 +908,6 @@ registerImportExportRoutes({
   asyncHandler,
   upload,
   uploadDir,
-  config,
   backendRoot,
   getBackendVersion,
   parseJsonField,

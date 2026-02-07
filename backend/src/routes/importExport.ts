@@ -56,7 +56,6 @@ type RegisterImportExportDeps = {
   ) => express.RequestHandler;
   upload: any;
   uploadDir: string;
-  config: { nodeEnv: string };
   backendRoot: string;
   getBackendVersion: () => string;
   parseJsonField: <T>(rawValue: string | null | undefined, fallback: T) => T;
@@ -231,7 +230,6 @@ export const registerImportExportRoutes = (deps: RegisterImportExportDeps) => {
     asyncHandler,
     upload,
     uploadDir,
-    config,
     backendRoot,
     getBackendVersion,
     parseJsonField,

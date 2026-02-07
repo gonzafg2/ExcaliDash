@@ -24,14 +24,6 @@ interface Config {
   enableAuditLogging: boolean;
 }
 
-const getRequiredEnv = (key: string): string => {
-  const value = process.env[key];
-  if (!value || value.trim().length === 0) {
-    throw new Error(`Missing required environment variable: ${key}`);
-  }
-  return value;
-};
-
 const getOptionalEnv = (key: string, defaultValue: string): string => {
   return process.env[key] || defaultValue;
 };
