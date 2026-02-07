@@ -907,6 +907,7 @@ registerImportExportRoutes({
   requireAuth,
   asyncHandler,
   upload,
+  uploadDir,
   config,
   backendRoot,
   getBackendVersion,

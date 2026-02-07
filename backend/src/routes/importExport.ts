@@ -55,6 +55,7 @@ type RegisterImportExportDeps = {
     fn: (req: express.Request, res: express.Response, next: express.NextFunction) => Promise<T>
   ) => express.RequestHandler;
   upload: any;
+  uploadDir: string;
   config: { nodeEnv: string };
   backendRoot: string;
   getBackendVersion: () => string;
@@ -154,6 +155,42 @@ const parseOptionalJson = <T>(raw: unknown, fallback: T): T => {
   return fallback;
 };
 
+const isPathInsideDirectory = (candidatePath: string, rootDir: string): boolean => {
+  const relativePath = path.relative(rootDir, candidatePath);
+  return (
+    relativePath === "" ||
+    (!relativePath.startsWith("..") && !path.isAbsolute(relativePath))
+  );
+};
+
+const resolveSafeUploadedFilePath = async (
+  filePath: unknown,
+  uploadRoot: string
+): Promise<string> => {
+  if (typeof filePath !== "string" || filePath.trim().length === 0) {
+    throw new ImportValidationError("Invalid upload path");
+  }
+
+  const absoluteUploadRoot = path.resolve(uploadRoot);
+  const absoluteFilePath = path.resolve(filePath);
+
+  let canonicalUploadRoot = absoluteUploadRoot;
+  let canonicalFilePath = absoluteFilePath;
+
+  try {
+    canonicalUploadRoot = await fsPromises.realpath(absoluteUploadRoot);
+    canonicalFilePath = await fsPromises.realpath(absoluteFilePath);
+  } catch {
+    throw new ImportValidationError("Invalid upload path");
+  }
+
+  if (!isPathInsideDirectory(canonicalFilePath, canonicalUploadRoot)) {
+    throw new ImportValidationError("Invalid upload path");
+  }
+
+  return canonicalFilePath;
+};
+
 const openReadonlySqliteDb = (filePath: string): any => {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -192,6 +229,7 @@ export const registerImportExportRoutes = (deps: RegisterImportExportDeps) => {
     requireAuth,
     asyncHandler,
     upload,
+    uploadDir,
     config,
     backendRoot,
     getBackendVersion,
@@ -337,7 +375,15 @@ Drawings: ${drawings.length}
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-    const stagedPath = req.file.path;
+    let stagedPath: string;
+    try {
+      stagedPath = await resolveSafeUploadedFilePath(req.file.path, uploadDir);
+    } catch (error) {
+      if (error instanceof ImportValidationError) {
+        return res.status(error.status).json({ error: "Invalid upload", message: error.message });
+      }
+      throw error;
+    }
     try {
       const buffer = await fsPromises.readFile(stagedPath);
       const zip = await JSZip.loadAsync(buffer);
@@ -417,7 +463,15 @@ Drawings: ${drawings.length}
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-    const stagedPath = req.file.path;
+    let stagedPath: string;
+    try {
+      stagedPath = await resolveSafeUploadedFilePath(req.file.path, uploadDir);
+    } catch (error) {
+      if (error instanceof ImportValidationError) {
+        return res.status(error.status).json({ error: "Invalid upload", message: error.message });
+      }
+      throw error;
+    }
     try {
       const buffer = await fsPromises.readFile(stagedPath);
       const zip = await JSZip.loadAsync(buffer);
@@ -666,7 +720,15 @@ Drawings: ${drawings.length}
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-    const stagedPath = req.file.path;
+    let stagedPath: string;
+    try {
+      stagedPath = await resolveSafeUploadedFilePath(req.file.path, uploadDir);
+    } catch (error) {
+      if (error instanceof ImportValidationError) {
+        return res.status(error.status).json({ error: "Invalid upload", message: error.message });
+      }
+      throw error;
+    }
     try {
       const isValid = await verifyDatabaseIntegrityAsync(stagedPath);
       if (!isValid) return res.status(400).json({ error: "Invalid database format" });
@@ -744,7 +806,15 @@ Drawings: ${drawings.length}
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-    const stagedPath = req.file.path;
+    let stagedPath: string;
+    try {
+      stagedPath = await resolveSafeUploadedFilePath(req.file.path, uploadDir);
+    } catch (error) {
+      if (error instanceof ImportValidationError) {
+        return res.status(error.status).json({ error: "Invalid upload", message: error.message });
+      }
+      throw error;
+    }
     try {
       const isValid = await verifyDatabaseIntegrityAsync(stagedPath);
       if (!isValid) return res.status(400).json({ error: "Invalid database format" });
