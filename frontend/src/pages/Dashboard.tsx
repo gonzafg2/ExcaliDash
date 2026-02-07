@@ -11,6 +11,7 @@ import clsx from 'clsx';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { useUpload } from '../context/UploadContext';
 import { DragOverlayPortal, getSelectionBounds, type Point, type SelectionBounds } from './dashboard/shared';
+import { isLatestRequest, mergeUniqueDrawings } from './dashboard/pagination';
 
 const PAGE_SIZE = 24;
 
@@ -92,7 +93,7 @@ export const Dashboard: React.FC = () => {
         }),
         api.getCollections()
       ]);
-      if (requestVersion !== listRequestVersionRef.current) return;
+      if (!isLatestRequest(requestVersion, listRequestVersionRef.current)) return;
       setDrawings(drawingsRes.drawings);
       setTotalCount(drawingsRes.totalCount);
       setCollections(collectionsData);
@@ -100,7 +101,7 @@ export const Dashboard: React.FC = () => {
     } catch (err) {
       console.error('Failed to fetch data:', err);
     } finally {
-      if (requestVersion === listRequestVersionRef.current) {
+      if (isLatestRequest(requestVersion, listRequestVersionRef.current)) {
         setIsLoading(false);
       }
     }
@@ -117,12 +118,8 @@ export const Dashboard: React.FC = () => {
         sortField: sortConfig.field,
         sortDirection: sortConfig.direction,
       });
-      if (requestVersion !== listRequestVersionRef.current) return;
-      setDrawings(prev => {
-        const seen = new Set(prev.map((d) => d.id));
-        const nextPage = drawingsRes.drawings.filter((d) => !seen.has(d.id));
-        return [...prev, ...nextPage];
-      });
+      if (!isLatestRequest(requestVersion, listRequestVersionRef.current)) return;
+      setDrawings(prev => mergeUniqueDrawings(prev, drawingsRes.drawings));
       setTotalCount(drawingsRes.totalCount);
     } catch (err) {
       console.error('Failed to fetch more data:', err);

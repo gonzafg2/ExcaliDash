@@ -3,6 +3,7 @@ import request from "supertest";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import JSZip from "jszip";
 import { getTestPrisma, setupTestDb, cleanupTestDb } from "./testUtils";
 
 type LegacyDbOptions = {
@@ -156,6 +157,111 @@ const createLegacySqliteDb = (opts: LegacyDbOptions): string => {
   return filePath;
 };
 
+const createExcalidashArchiveWithDuplicateDrawingIds = async (): Promise<string> => {
+  const dir = createTempDir();
+  const filePath = path.join(dir, "duplicate-drawing-ids.excalidash");
+  const zip = new JSZip();
+
+  const manifest = {
+    format: "excalidash",
+    formatVersion: 1,
+    exportedAt: new Date().toISOString(),
+    unorganizedFolder: "Unorganized",
+    collections: [] as any[],
+    drawings: [
+      {
+        id: "duplicate-drawing-id",
+        name: "Drawing One",
+        filePath: "Unorganized/drawing-1.excalidraw",
+        collectionId: null,
+      },
+      {
+        id: "duplicate-drawing-id",
+        name: "Drawing Two",
+        filePath: "Unorganized/drawing-2.excalidraw",
+        collectionId: null,
+      },
+    ],
+  };
+
+  zip.file("excalidash.manifest.json", JSON.stringify(manifest));
+  zip.file(
+    "Unorganized/drawing-1.excalidraw",
+    JSON.stringify({ type: "excalidraw", version: 2, source: "test", elements: [], appState: {}, files: {} })
+  );
+  zip.file(
+    "Unorganized/drawing-2.excalidraw",
+    JSON.stringify({ type: "excalidraw", version: 2, source: "test", elements: [], appState: {}, files: {} })
+  );
+
+  const buffer = await zip.generateAsync({ type: "nodebuffer" });
+  fs.writeFileSync(filePath, buffer);
+  return filePath;
+};
+
+const createLegacySqliteDbWithDuplicateDrawingIds = (): string => {
+  const dir = createTempDir();
+  const filePath = path.join(dir, "legacy-duplicate-ids.db");
+  const db = openWritableDb(filePath);
+
+  try {
+    db.exec(`
+      CREATE TABLE "Drawing" (
+        id TEXT,
+        name TEXT NOT NULL,
+        elements TEXT NOT NULL,
+        appState TEXT NOT NULL,
+        files TEXT,
+        preview TEXT,
+        version INTEGER,
+        collectionId TEXT,
+        collectionName TEXT,
+        createdAt TEXT,
+        updatedAt TEXT
+      );
+    `);
+
+    const now = new Date("2024-01-03T00:00:00.000Z").toISOString();
+    const insertDrawing = db.prepare(
+      `INSERT INTO "Drawing"
+        (id, name, elements, appState, files, preview, version, collectionId, collectionName, createdAt, updatedAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+
+    insertDrawing.run(
+      "legacy-duplicate-id",
+      "Legacy Drawing A",
+      JSON.stringify([]),
+      JSON.stringify({}),
+      JSON.stringify({}),
+      null,
+      1,
+      null,
+      null,
+      now,
+      now,
+    );
+
+    insertDrawing.run(
+      "legacy-duplicate-id",
+      "Legacy Drawing B",
+      JSON.stringify([]),
+      JSON.stringify({}),
+      JSON.stringify({}),
+      null,
+      1,
+      null,
+      null,
+      now,
+      now,
+    );
+  } finally {
+    db.close();
+  }
+
+  return filePath;
+};
+
 describe("Import compatibility (legacy exports)", () => {
   const uploadsDir = path.resolve(__dirname, "../../uploads");
   const userAgent = "vitest-import-compat";
@@ -286,5 +392,53 @@ describe("Import compatibility (legacy exports)", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("Invalid legacy DB");
+  });
+
+  it("rejects .excalidash verify when manifest has duplicate drawing IDs", async () => {
+    const archive = await createExcalidashArchiveWithDuplicateDrawingIds();
+    const res = await request(app)
+      .post("/import/excalidash/verify")
+      .set("User-Agent", userAgent)
+      .set(csrfHeaderName, csrfToken)
+      .attach("archive", archive);
+
+    expect(res.status).toBe(400);
+    expect(String(res.body.message || "")).toContain("Duplicate drawing id");
+  });
+
+  it("rejects .excalidash import when manifest has duplicate drawing IDs", async () => {
+    const archive = await createExcalidashArchiveWithDuplicateDrawingIds();
+    const res = await request(app)
+      .post("/import/excalidash")
+      .set("User-Agent", userAgent)
+      .set(csrfHeaderName, csrfToken)
+      .attach("archive", archive);
+
+    expect(res.status).toBe(400);
+    expect(String(res.body.message || "")).toContain("Duplicate drawing id");
+  });
+
+  it("rejects legacy verify when DB has duplicate drawing IDs", async () => {
+    const legacyDb = createLegacySqliteDbWithDuplicateDrawingIds();
+    const res = await request(app)
+      .post("/import/sqlite/legacy/verify")
+      .set("User-Agent", userAgent)
+      .set(csrfHeaderName, csrfToken)
+      .attach("db", legacyDb);
+
+    expect(res.status).toBe(400);
+    expect(String(res.body.message || "")).toContain("Duplicate drawing id");
+  });
+
+  it("rejects legacy import when DB has duplicate drawing IDs", async () => {
+    const legacyDb = createLegacySqliteDbWithDuplicateDrawingIds();
+    const res = await request(app)
+      .post("/import/sqlite/legacy")
+      .set("User-Agent", userAgent)
+      .set(csrfHeaderName, csrfToken)
+      .attach("db", legacyDb);
+
+    expect(res.status).toBe(400);
+    expect(String(res.body.message || "")).toContain("Duplicate drawing id");
   });
 });

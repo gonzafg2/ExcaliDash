@@ -340,8 +340,8 @@ export const createDrawing = async (
 };
 
 export const updateDrawing = async (id: string, data: Partial<Drawing>) => {
-  const response = await api.put<{ success: true }>(`/drawings/${id}`, data);
-  return response.data;
+  const response = await api.put<Drawing>(`/drawings/${id}`, data);
+  return deserializeDrawing(response.data);
 };
 
 export const deleteDrawing = async (id: string) => {

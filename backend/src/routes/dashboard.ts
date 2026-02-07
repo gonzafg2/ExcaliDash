@@ -310,7 +310,12 @@ export const registerDashboardRoutes = (
       appState?: Record<string, unknown>;
       preview?: string | null;
       files?: Record<string, unknown>;
+      version?: number;
     };
+    const isSceneUpdate =
+      payload.elements !== undefined ||
+      payload.appState !== undefined ||
+      payload.files !== undefined;
     const data: Prisma.DrawingUpdateInput = { version: { increment: 1 } };
 
     if (payload.name !== undefined) data.name = payload.name;
@@ -334,11 +339,28 @@ export const registerDashboardRoutes = (
       }
     }
 
+    const updateWhere: Prisma.DrawingWhereInput = { id, userId: req.user.id };
+    if (isSceneUpdate && payload.version !== undefined) {
+      updateWhere.version = payload.version;
+    }
+
     const updateResult = await prisma.drawing.updateMany({
-      where: { id, userId: req.user.id },
+      where: updateWhere,
       data,
     });
     if (updateResult.count === 0) {
+      if (isSceneUpdate && payload.version !== undefined) {
+        const latestDrawing = await prisma.drawing.findFirst({
+          where: { id, userId: req.user.id },
+          select: { version: true },
+        });
+        return res.status(409).json({
+          error: "Conflict",
+          code: "VERSION_CONFLICT",
+          message: "Drawing has changed since this editor state was loaded.",
+          currentVersion: latestDrawing?.version ?? null,
+        });
+      }
       return res.status(404).json({ error: "Drawing not found" });
     }
 

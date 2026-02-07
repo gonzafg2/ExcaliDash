@@ -560,6 +560,7 @@ const drawingUpdateSchema = drawingBaseSchema
     elements: elementSchema.array().optional(),
     appState: appStateSchema.optional(),
     files: filesFieldSchema,
+    version: z.number().int().positive().optional(),
   })
   .refine(
     (data) => {
