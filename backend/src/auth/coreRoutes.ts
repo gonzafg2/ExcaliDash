@@ -56,6 +56,7 @@ type RegisterCoreRoutesDeps = {
   isMissingRefreshTokenTableError: (error: unknown) => boolean;
   bootstrapUserId: string;
   defaultSystemConfigId: string;
+  clearAuthEnabledCache: () => void;
 };
 
 class HttpError extends Error {
@@ -86,6 +87,7 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
     isMissingRefreshTokenTableError,
     bootstrapUserId,
     defaultSystemConfigId,
+    clearAuthEnabledCache,
   } = deps;
   const getUserTrashCollectionId = (userId: string): string => `trash:${userId}`;
 
@@ -713,6 +715,7 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
           registrationEnabled: systemConfig.registrationEnabled,
         },
       });
+      clearAuthEnabledCache();
 
       const bootstrapUser = await prisma.user.findUnique({
         where: { id: bootstrapUserId },

@@ -342,6 +342,7 @@ export const createAuthRouter = (deps: CreateAuthRouterDeps): express.Router => 
     isMissingRefreshTokenTableError,
     bootstrapUserId: BOOTSTRAP_USER_ID,
     defaultSystemConfigId: DEFAULT_SYSTEM_CONFIG_ID,
+    clearAuthEnabledCache: authModeService.clearAuthEnabledCache,
   });
 
   registerAdminRoutes({

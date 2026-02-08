@@ -17,6 +17,13 @@ export const createAuthModeService = (
   const authEnabledTtlMs = options?.authEnabledTtlMs ?? 5000;
   let authEnabledCache: AuthEnabledCache | null = null;
 
+  const getSystemConfigAuthEnabled = async () => {
+    return prisma.systemConfig.findUnique({
+      where: { id: DEFAULT_SYSTEM_CONFIG_ID },
+      select: { authEnabled: true },
+    });
+  };
+
   const ensureSystemConfig = async () => {
     return prisma.systemConfig.upsert({
       where: { id: DEFAULT_SYSTEM_CONFIG_ID },
@@ -36,6 +43,12 @@ export const createAuthModeService = (
     const now = Date.now();
     if (authEnabledCache && now - authEnabledCache.fetchedAt < authEnabledTtlMs) {
       return authEnabledCache.value;
+    }
+
+    const existingSystemConfig = await getSystemConfigAuthEnabled();
+    if (existingSystemConfig) {
+      authEnabledCache = { value: existingSystemConfig.authEnabled, fetchedAt: now };
+      return existingSystemConfig.authEnabled;
     }
 
     const systemConfig = await ensureSystemConfig();
