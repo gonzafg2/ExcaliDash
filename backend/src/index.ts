@@ -19,19 +19,18 @@ import {
   sanitizeSvg,
   elementSchema,
   appStateSchema,
-  createCsrfToken,
-  validateCsrfToken,
-  getCsrfTokenHeader,
-  getOriginFromReferer,
 } from "./security";
-import jwt from "jsonwebtoken";
 import { config } from "./config";
-import { requireAuth } from "./middleware/auth";
+import { authModeService, requireAuth } from "./middleware/auth";
 import { errorHandler, asyncHandler } from "./middleware/errorHandler";
 import authRouter from "./auth";
 import { logAuditEvent } from "./utils/audit";
 import { registerDashboardRoutes } from "./routes/dashboard";
 import { registerImportExportRoutes } from "./routes/importExport";
+import { prisma } from "./db/prisma";
+import { createDrawingsCacheStore } from "./server/drawingsCache";
+import { registerCsrfProtection } from "./server/csrf";
+import { registerSocketHandlers } from "./server/socket";
 
 const backendRoot = path.resolve(__dirname, "../");
 console.log("Resolved DATABASE_URL:", process.env.DATABASE_URL);
@@ -135,7 +134,6 @@ const io = new Server(httpServer, {
   },
   maxHttpBufferSize: 1e8,
 });
-const prisma = new PrismaClient();
 const parseJsonField = <T>(
   rawValue: string | null | undefined,
   fallback: T
@@ -159,48 +157,12 @@ const DRAWINGS_CACHE_TTL_MS = (() => {
   }
   return parsed;
 })();
-type DrawingsCacheEntry = { body: Buffer; expiresAt: number };
-const drawingsCache = new Map<string, DrawingsCacheEntry>();
-
-const buildDrawingsCacheKey = (keyParts: {
-  userId: string;
-  searchTerm: string;
-  collectionFilter: string;
-  includeData: boolean;
-  sortField: "name" | "createdAt" | "updatedAt";
-  sortDirection: "asc" | "desc";
-}) =>
-  JSON.stringify([
-    keyParts.userId,
-    keyParts.searchTerm,
-    keyParts.collectionFilter,
-    keyParts.includeData ? "full" : "summary",
-    keyParts.sortField,
-    keyParts.sortDirection,
-  ]);
-
-const getCachedDrawingsBody = (key: string): Buffer | null => {
-  const entry = drawingsCache.get(key);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
-    drawingsCache.delete(key);
-    return null;
-  }
-  return entry.body;
-};
-
-const cacheDrawingsResponse = (key: string, payload: unknown): Buffer => {
-  const body = Buffer.from(JSON.stringify(payload));
-  drawingsCache.set(key, {
-    body,
-    expiresAt: Date.now() + DRAWINGS_CACHE_TTL_MS,
-  });
-  return body;
-};
-
-const invalidateDrawingsCache = () => {
-  drawingsCache.clear();
-};
+const {
+  buildDrawingsCacheKey,
+  getCachedDrawingsBody,
+  cacheDrawingsResponse,
+  invalidateDrawingsCache,
+} = createDrawingsCacheStore(DRAWINGS_CACHE_TTL_MS);
 
 const getUserTrashCollectionId = (userId: string): string => `trash:${userId}`;
 
@@ -229,15 +191,6 @@ const ensureTrashCollection = async (
     data: { collectionId: trashCollectionId },
   });
 };
-
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of drawingsCache.entries()) {
-    if (now > entry.expiresAt) {
-      drawingsCache.delete(key);
-    }
-  }
-}, 60_000).unref();
 
 const PORT = config.port;
 
@@ -350,17 +303,7 @@ app.use((req, res, next) => {
   next();
 });
 
-const requestCounts = new Map<string, { count: number; resetTime: number }>();
 const RATE_LIMIT_WINDOW = 15 * 60 * 1000;
-
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, data] of requestCounts.entries()) {
-    if (now > data.resetTime) {
-      requestCounts.delete(ip);
-    }
-  }
-}, 5 * 60 * 1000).unref();
 
 // General rate limiting with express-rate-limit
 const generalRateLimiter = rateLimit({
@@ -382,252 +325,11 @@ const generalRateLimiter = rateLimit({
 
 app.use(generalRateLimiter);
 
-// CSRF Protection Middleware
-// Generates a unique client ID based on IP and User-Agent for token association
-const CSRF_CLIENT_COOKIE_NAME = "excalidash-csrf-client";
-const CSRF_CLIENT_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30; // 30 days
-
-const parseCookies = (cookieHeader: string | undefined): Record<string, string> => {
-  if (!cookieHeader) return {};
-  const cookies: Record<string, string> = {};
-  for (const part of cookieHeader.split(";")) {
-    const [rawKey, ...rawValueParts] = part.split("=");
-    const key = rawKey?.trim();
-    if (!key) continue;
-    const rawValue = rawValueParts.join("=").trim();
-    try {
-      cookies[key] = decodeURIComponent(rawValue);
-    } catch {
-      cookies[key] = rawValue;
-    }
-  }
-  return cookies;
-};
-
-const getCsrfClientCookieValue = (req: express.Request): string | null => {
-  const cookies = parseCookies(req.headers.cookie);
-  const value = cookies[CSRF_CLIENT_COOKIE_NAME];
-  if (!value) return null;
-  if (!/^[A-Za-z0-9_-]{16,128}$/.test(value)) return null;
-  return value;
-};
-
-const requestUsesHttps = (req: express.Request): boolean => {
-  if (req.secure) return true;
-  const forwardedProto = req.headers["x-forwarded-proto"];
-  const raw = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto;
-  const firstHop = String(raw || "")
-    .split(",")[0]
-    .trim()
-    .toLowerCase();
-  return firstHop === "https";
-};
-
-const setCsrfClientCookie = (req: express.Request, res: express.Response, value: string): void => {
-  const secure = requestUsesHttps(req) ? "; Secure" : "";
-  res.append(
-    "Set-Cookie",
-    `${CSRF_CLIENT_COOKIE_NAME}=${encodeURIComponent(
-      value
-    )}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${CSRF_CLIENT_COOKIE_MAX_AGE_SECONDS}${secure}`
-  );
-};
-
-const getLegacyClientId = (req: express.Request): string => {
-  const ip = req.ip || req.connection.remoteAddress || "unknown";
-  const userAgent = req.headers["user-agent"] || "unknown";
-  return `${ip}:${userAgent}`.slice(0, 256);
-};
-
-const getClientIdForTokenIssue = (
-  req: express.Request,
-  res: express.Response
-): { clientId: string; strategy: "cookie" | "legacy-bootstrap" } => {
-  const existingCookieValue = getCsrfClientCookieValue(req);
-  if (existingCookieValue) {
-    return {
-      clientId: `cookie:${existingCookieValue}`,
-      strategy: "cookie",
-    };
-  }
-
-  // No cookie presented by client yet:
-  // - issue a token bound to legacy identity for compatibility with non-cookie clients
-  // - still set a cookie so subsequent browser requests can transition to cookie-bound tokens
-  const generatedCookieValue = uuidv4().replace(/-/g, "");
-  setCsrfClientCookie(req, res, generatedCookieValue);
-  return {
-    clientId: getLegacyClientId(req),
-    strategy: "legacy-bootstrap",
-  };
-};
-
-const getClientIdCandidatesForValidation = (req: express.Request): string[] => {
-  const candidates: string[] = [];
-  const cookieValue = getCsrfClientCookieValue(req);
-  if (cookieValue) {
-    candidates.push(`cookie:${cookieValue}`);
-  }
-
-  const legacyClientId = getLegacyClientId(req);
-  if (!candidates.includes(legacyClientId)) {
-    candidates.push(legacyClientId);
-  }
-
-  return candidates;
-};
-
-const getClientIdForTokenIssueDebug = (
-  req: express.Request,
-  res: express.Response
-): string => {
-  const { clientId, strategy } = getClientIdForTokenIssue(req, res);
-
-  // Debug logging for CSRF troubleshooting (issue #38)
-  if (process.env.DEBUG_CSRF === "true") {
-    const validationCandidates = getClientIdCandidatesForValidation(req);
-    const ip = req.ip || req.connection.remoteAddress || "unknown";
-    console.log("[CSRF DEBUG] getClientId", {
-      method: req.method,
-      path: req.path,
-      ip,
-      remoteAddress: req.connection.remoteAddress,
-      "x-forwarded-for": req.headers["x-forwarded-for"],
-      "x-real-ip": req.headers["x-real-ip"],
-      hasCsrfCookie: Boolean(getCsrfClientCookieValue(req)),
-      clientIdPreview: clientId.slice(0, 60) + "...",
-      trustProxySetting: req.app.get("trust proxy"),
-      strategy,
-      validationCandidatesPreview: validationCandidates.map((candidate) =>
-        `${candidate.slice(0, 60)}...`
-      ),
-    });
-  }
-
-  return clientId;
-};
-
-// Rate limiter specifically for CSRF token generation to prevent store exhaustion
-const csrfRateLimit = new Map<string, { count: number; resetTime: number }>();
-const CSRF_RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute
-let csrfCleanupCounter = 0;
-const CSRF_MAX_REQUESTS = (() => {
-  const parsed = Number(process.env.CSRF_MAX_REQUESTS);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return 60; // 1 per second average
-  }
-  return parsed;
-})();
-
-// CSRF token endpoint - clients should call this to get a token
-app.get("/csrf-token", (req, res) => {
-  const ip = req.ip || req.connection.remoteAddress || "unknown";
-  const now = Date.now();
-  const clientLimit = csrfRateLimit.get(ip);
-
-  if (clientLimit && now < clientLimit.resetTime) {
-    if (clientLimit.count >= CSRF_MAX_REQUESTS) {
-      return res.status(429).json({
-        error: "Rate limit exceeded",
-        message: "Too many CSRF token requests",
-      });
-    }
-    clientLimit.count++;
-  } else {
-    csrfRateLimit.set(ip, { count: 1, resetTime: now + CSRF_RATE_LIMIT_WINDOW });
-  }
-
-  // Cleanup every 100 requests.
-  csrfCleanupCounter += 1;
-  if (csrfCleanupCounter % 100 === 0) {
-    for (const [key, data] of csrfRateLimit.entries()) {
-      if (now > data.resetTime) csrfRateLimit.delete(key);
-    }
-  }
-
-  const clientId = getClientIdForTokenIssueDebug(req, res);
-  const token = createCsrfToken(clientId);
-
-  res.json({
-    token,
-    header: getCsrfTokenHeader()
-  });
-});
-
-// CSRF validation middleware for state-changing requests
-const csrfProtectionMiddleware = (
-  req: express.Request,
-  res: express.Response,
-  next: express.NextFunction
-) => {
-  // Skip CSRF validation for safe methods (GET, HEAD, OPTIONS)
-  // Note: /csrf-token is a GET endpoint, so it's automatically exempt
-  const safeMethods = ["GET", "HEAD", "OPTIONS"];
-  if (safeMethods.includes(req.method)) {
-    return next();
-  }
-
-  // Origin/Referer check for defense in depth
-  const origin = req.headers["origin"];
-  const referer = req.headers["referer"];
-
-  // If Origin is present, it must match allowed origins
-  const originValue = Array.isArray(origin) ? origin[0] : origin;
-  const refererValue = Array.isArray(referer) ? referer[0] : referer;
-
-  if (originValue) {
-    if (!isAllowedOrigin(originValue)) {
-      return res.status(403).json({
-        error: "CSRF origin mismatch",
-        message: "Origin not allowed",
-      });
-    }
-  } else if (refererValue) {
-    // If no Origin but Referer exists, validate its *origin* (avoid prefix bypass)
-    const refererOrigin = getOriginFromReferer(refererValue);
-    if (!refererOrigin || !isAllowedOrigin(refererOrigin)) {
-      return res.status(403).json({
-        error: "CSRF referer mismatch",
-        message: "Referer not allowed",
-      });
-    }
-  }
-  // Note: If neither Origin nor Referer is present, we proceed to token check.
-  // Some legitimate clients/proxies might strip these, so we don't block strictly on their absence,
-  // but relying on the token is the primary defense.
-
-  const clientIdCandidates = getClientIdCandidatesForValidation(req);
-  const headerName = getCsrfTokenHeader();
-  const tokenHeader = req.headers[headerName];
-  const token = Array.isArray(tokenHeader) ? tokenHeader[0] : tokenHeader;
-
-  if (!token) {
-    return res.status(403).json({
-      error: "CSRF token missing",
-      message: `Missing ${headerName} header`,
-    });
-  }
-
-  const isValidToken = clientIdCandidates.some((clientId) =>
-    validateCsrfToken(clientId, token)
-  );
-  if (!isValidToken) {
-    return res.status(403).json({
-      error: "CSRF token invalid",
-      message: "Invalid or expired CSRF token. Please refresh and try again.",
-    });
-  }
-
-  next();
-};
-
-// Apply CSRF protection to all routes (except auth endpoints)
-app.use((req, res, next) => {
-  // Skip CSRF for auth endpoints
-  if (req.path.startsWith("/auth/")) {
-    return next();
-  }
-  csrfProtectionMiddleware(req, res, next);
+registerCsrfProtection({
+  app,
+  isAllowedOrigin,
+  maxRequestsPerWindow: config.csrfMaxRequests,
+  enableDebugLogging: process.env.DEBUG_CSRF === "true",
 });
 
 // Authentication routes (no CSRF required, uses JWT)
@@ -843,223 +545,11 @@ const removeFileIfExists = async (filePath?: string) => {
   }
 };
 
-interface User {
-  id: string;
-  name: string;
-  initials: string;
-  color: string;
-  socketId: string;
-  isActive: boolean;
-}
-
-const roomUsers = new Map<string, User[]>();
-
-// Track which authenticated user owns each socket for authorization checks
-const socketUserMap = new Map<string, string>();
-
-const toPresenceName = (value: unknown): string => {
-  if (typeof value !== "string") return "User";
-  const trimmed = value.trim().slice(0, 120);
-  return trimmed.length > 0 ? trimmed : "User";
-};
-
-const toPresenceInitials = (name: string): string => {
-  const words = name
-    .split(/\s+/)
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
-  if (words.length === 0) return "U";
-  const first = words[0]?.[0] ?? "";
-  const second = words.length > 1 ? words[1]?.[0] ?? "" : "";
-  const initials = `${first}${second}`.toUpperCase().slice(0, 2);
-  return initials.length > 0 ? initials : "U";
-};
-
-const toPresenceColor = (value: unknown): string => {
-  if (typeof value !== "string") return "#4f46e5";
-  const trimmed = value.trim();
-  if (/^#[0-9a-fA-F]{3,8}$/.test(trimmed)) {
-    return trimmed;
-  }
-  return "#4f46e5";
-};
-
-/**
- * Verify JWT from Socket.io auth and check if auth is required.
- * When auth is disabled (single-user mode), all connections are allowed.
- */
-const getSocketAuthUserId = async (token?: string): Promise<string | null> => {
-  // Check if auth is enabled
-  const systemConfig = await prisma.systemConfig.findUnique({
-    where: { id: "default" },
-    select: { authEnabled: true },
-  });
-
-  if (!systemConfig || !systemConfig.authEnabled) {
-    // Auth disabled: allow all connections (single-user / bootstrap mode)
-    return "bootstrap-admin";
-  }
-
-  // Auth enabled: require valid JWT
-  if (!token) return null;
-
-  try {
-    const decoded = jwt.verify(token, config.jwtSecret) as Record<string, unknown>;
-    if (
-      typeof decoded.userId !== "string" ||
-      typeof decoded.email !== "string" ||
-      decoded.type !== "access"
-    ) {
-      return null;
-    }
-
-    // Verify user is still active
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.userId },
-      select: { id: true, isActive: true },
-    });
-
-    if (!user || !user.isActive) return null;
-    return user.id;
-  } catch {
-    return null;
-  }
-};
-
-io.use(async (socket, next) => {
-  try {
-    const token = socket.handshake.auth?.token as string | undefined;
-    const userId = await getSocketAuthUserId(token);
-
-    if (!userId) {
-      return next(new Error("Authentication required"));
-    }
-
-    socketUserMap.set(socket.id, userId);
-    next();
-  } catch {
-    next(new Error("Authentication failed"));
-  }
-});
-
-io.on("connection", (socket) => {
-  const authenticatedUserId = socketUserMap.get(socket.id);
-  const authorizedDrawingIds = new Set<string>();
-
-  socket.on(
-    "join-room",
-    async ({
-      drawingId,
-      user,
-    }: {
-      drawingId: string;
-      user: Omit<User, "socketId" | "isActive">;
-    }) => {
-      try {
-        // Verify the authenticated user owns this drawing
-        if (authenticatedUserId) {
-          const drawing = await prisma.drawing.findFirst({
-            where: { id: drawingId, userId: authenticatedUserId },
-            select: { id: true },
-          });
-
-          if (!drawing) {
-            socket.emit("error", { message: "You do not have access to this drawing" });
-            return;
-          }
-        }
-
-        const roomId = `drawing_${drawingId}`;
-        socket.join(roomId);
-        authorizedDrawingIds.add(drawingId);
-
-        let trustedUserId =
-          typeof user?.id === "string" && user.id.trim().length > 0
-            ? user.id.trim().slice(0, 200)
-            : socket.id;
-        let trustedName = toPresenceName(user?.name);
-
-        // In auth-enabled mode, identity should come from the authenticated account.
-        if (authenticatedUserId && authenticatedUserId !== "bootstrap-admin") {
-          const account = await prisma.user.findUnique({
-            where: { id: authenticatedUserId },
-            select: { id: true, name: true },
-          });
-          if (account) {
-            trustedUserId = account.id;
-            trustedName = toPresenceName(account.name);
-          }
-        }
-
-        const newUser: User = {
-          id: trustedUserId,
-          name: trustedName,
-          initials: toPresenceInitials(trustedName),
-          color: toPresenceColor(user?.color),
-          socketId: socket.id,
-          isActive: true,
-        };
-
-        const currentUsers = roomUsers.get(roomId) || [];
-        const filteredUsers = currentUsers.filter((u) => u.id !== newUser.id);
-        filteredUsers.push(newUser);
-        roomUsers.set(roomId, filteredUsers);
-
-        io.to(roomId).emit("presence-update", filteredUsers);
-      } catch (err) {
-        console.error("Error in join-room handler:", err);
-        socket.emit("error", { message: "Failed to join room" });
-      }
-    }
-  );
-
-  socket.on("cursor-move", (data) => {
-    const drawingId = typeof data?.drawingId === "string" ? data.drawingId : null;
-    if (!drawingId || !authorizedDrawingIds.has(drawingId)) {
-      return;
-    }
-    const roomId = `drawing_${drawingId}`;
-    socket.volatile.to(roomId).emit("cursor-move", data);
-  });
-
-  socket.on("element-update", (data) => {
-    const drawingId = typeof data?.drawingId === "string" ? data.drawingId : null;
-    if (!drawingId || !authorizedDrawingIds.has(drawingId)) {
-      return;
-    }
-    const roomId = `drawing_${drawingId}`;
-    socket.to(roomId).emit("element-update", data);
-  });
-
-  socket.on(
-    "user-activity",
-    ({ drawingId, isActive }: { drawingId: string; isActive: boolean }) => {
-      if (!authorizedDrawingIds.has(drawingId)) {
-        return;
-      }
-      const roomId = `drawing_${drawingId}`;
-      const users = roomUsers.get(roomId);
-      if (users) {
-        const user = users.find((u) => u.socketId === socket.id);
-        if (user) {
-          user.isActive = isActive;
-          io.to(roomId).emit("presence-update", users);
-        }
-      }
-    }
-  );
-
-  socket.on("disconnect", () => {
-    socketUserMap.delete(socket.id);
-    roomUsers.forEach((users, roomId) => {
-      const index = users.findIndex((u) => u.socketId === socket.id);
-      if (index !== -1) {
-        users.splice(index, 1);
-        roomUsers.set(roomId, users);
-        io.to(roomId).emit("presence-update", users);
-      }
-    });
-  });
+registerSocketHandlers({
+  io,
+  prisma,
+  authModeService,
+  jwtSecret: config.jwtSecret,
 });
 
 app.get("/health", (req, res) => {

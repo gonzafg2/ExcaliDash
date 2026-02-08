@@ -7,7 +7,7 @@ import debounce from 'lodash/debounce';
 import throttle from 'lodash/throttle';
 import { Toaster, toast } from 'sonner';
 import { io, Socket } from 'socket.io-client';
-import { getUserIdentity, type UserIdentity } from '../utils/identity';
+import type { UserIdentity } from '../utils/identity';
 import { useAuth } from '../context/AuthContext';
 import { reconcileElements } from '../utils/sync';
 import { exportFromEditor } from '../utils/exportUtils';
@@ -15,9 +15,7 @@ import * as api from '../api';
 import { useTheme } from '../context/ThemeContext';
 import {
   UIOptions,
-  getColorFromString,
   getFilesDelta,
-  getInitialsFromName,
   hasRenderableElements,
   haveSameElements,
   isSuspiciousEmptySnapshot,
@@ -25,6 +23,8 @@ import {
   isStaleNonRenderableSnapshot,
 } from './editor/shared';
 import type { ElementVersionInfo } from './editor/shared';
+import { useEditorChrome } from './editor/useEditorChrome';
+import { useEditorIdentity } from './editor/useEditorIdentity';
 
 interface Peer extends UserIdentity {
   isActive: boolean;
@@ -49,75 +49,13 @@ export const Editor: React.FC = () => {
   const [isSceneLoading, setIsSceneLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isSavingOnLeave, setIsSavingOnLeave] = useState(false);
-  const [isHeaderVisible, setIsHeaderVisible] = useState(true);
   const [autoHideEnabled, setAutoHideEnabled] = useState(true);
-
-  useEffect(() => {
-    document.title = `${drawingName} - ExcaliDash`;
-    return () => {
-      document.title = 'ExcaliDash';
-    };
-  }, [drawingName]);
-
-  // Auto-hide header based on mouse movement
-  useEffect(() => {
-    if (!autoHideEnabled || isRenaming) {
-      setIsHeaderVisible(true);
-      return;
-    }
-
-    let hideTimeout: ReturnType<typeof setTimeout> | null = null;
-    let isInTriggerZone = false;
-
-    const handleMouseMove = throttle((e: MouseEvent) => {
-      const wasInTriggerZone = isInTriggerZone;
-      isInTriggerZone = e.clientY < 5;
-
-      if (isInTriggerZone) {
-        // Mouse is in trigger zone - show header
-        setIsHeaderVisible(true);
-        if (hideTimeout !== null) {
-          clearTimeout(hideTimeout);
-          hideTimeout = null;
-        }
-      } else if (wasInTriggerZone) {
-        // Mouse just left trigger zone - start hide timer
-        if (hideTimeout !== null) clearTimeout(hideTimeout);
-        hideTimeout = setTimeout(() => {
-          setIsHeaderVisible(false);
-        }, 2000);
-      }
-      // If mouse is already out of trigger zone and moving, don't reset timer
-    }, 100);
-
-    // Show header initially
-    setIsHeaderVisible(true);
-
-    // Hide after initial delay if mouse doesn't move to top
-    hideTimeout = setTimeout(() => {
-      setIsHeaderVisible(false);
-    }, 3000);
-
-    window.addEventListener('mousemove', handleMouseMove, { passive: true });
-
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      if (hideTimeout !== null) clearTimeout(hideTimeout);
-    };
-  }, [autoHideEnabled, isRenaming]);
-  
-  // Use authenticated user identity or fallback to generated identity
-  const [me] = useState<UserIdentity>(() => {
-    if (user) {
-      return {
-        id: user.id,
-        name: user.name,
-        initials: getInitialsFromName(user.name),
-        color: getColorFromString(user.id),
-      };
-    }
-    return getUserIdentity();
+  const { isHeaderVisible, setIsHeaderVisible } = useEditorChrome({
+    drawingName,
+    autoHideEnabled,
+    isRenaming,
   });
+  const me: UserIdentity = useEditorIdentity(user);
 
   const [peers, setPeers] = useState<Peer[]>([]);
   const [isReady, setIsReady] = useState(false);

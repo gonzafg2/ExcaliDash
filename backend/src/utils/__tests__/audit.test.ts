@@ -7,7 +7,12 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { getTestPrisma, setupTestDb, initTestDb, createTestUser } from "../../__tests__/testUtils";
-import { logAuditEvent, getAuditLogs, type AuditLogData } from "../audit";
+import {
+  logAuditEvent,
+  getAuditLogs,
+  setAuditPrismaProvider,
+  type AuditLogData,
+} from "../audit";
 
 describe("Audit Logging", () => {
   const prisma = getTestPrisma();
@@ -16,11 +21,13 @@ describe("Audit Logging", () => {
   beforeAll(async () => {
     setupTestDb();
     testUser = await initTestDb(prisma);
+    setAuditPrismaProvider(() => prisma);
     // Enable audit logging for tests
     process.env.ENABLE_AUDIT_LOGGING = "true";
   });
 
   afterAll(async () => {
+    setAuditPrismaProvider(null);
     await prisma.$disconnect();
     delete process.env.ENABLE_AUDIT_LOGGING;
   });

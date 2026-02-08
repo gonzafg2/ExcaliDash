@@ -1,9 +1,14 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
-
-const API_URL = import.meta.env.VITE_API_URL || "/api";
+import {
+  authStatus,
+  authMe,
+  authRefresh,
+  authLogin,
+  authRegister,
+  isAxiosError,
+} from '../api';
 
 interface User {
   id: string;
@@ -39,24 +44,21 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [bootstrapRequired, setBootstrapRequired] = useState(false);
   const navigate = useNavigate();
 
-  // Load user from localStorage on mount
   useEffect(() => {
     const loadUser = async () => {
       try {
-        // Determine auth mode first (single-user mode vs multi-user auth).
         try {
-          const statusResponse = await axios.get(`${API_URL}/auth/status`);
+          const statusResponse = await authStatus();
           const enabled =
-            typeof statusResponse.data?.authEnabled === "boolean"
-              ? statusResponse.data.authEnabled
-              : typeof statusResponse.data?.enabled === "boolean"
-                ? statusResponse.data.enabled
+            typeof statusResponse?.authEnabled === "boolean"
+              ? statusResponse.authEnabled
+              : typeof statusResponse?.enabled === "boolean"
+                ? statusResponse.enabled
                 : true;
           setAuthEnabled(enabled);
           localStorage.setItem(AUTH_ENABLED_CACHE_KEY, String(enabled));
-          setBootstrapRequired(Boolean(statusResponse.data?.bootstrapRequired));
+          setBootstrapRequired(Boolean(statusResponse?.bootstrapRequired));
 
-          // In single-user mode, do not require login.
           if (!enabled) {
             localStorage.removeItem(TOKEN_KEY);
             localStorage.removeItem(REFRESH_TOKEN_KEY);
@@ -75,7 +77,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             setUser(null);
             return;
           }
-          // If status fails and no cached mode exists, default to auth-enabled mode.
           setAuthEnabled(true);
           setBootstrapRequired(false);
         }
@@ -86,39 +87,28 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (storedUser && storedToken) {
           const userData = JSON.parse(storedUser);
           setUser(userData);
-          
-          // Verify token is still valid by fetching user info
+
           try {
-            const response = await axios.get(`${API_URL}/auth/me`, {
-              headers: {
-                Authorization: `Bearer ${storedToken}`,
-              },
-            });
-            setUser(response.data.user);
-          } catch (error) {
-            // Token invalid, try refresh
+            const response = await authMe(storedToken);
+            setUser(response.user);
+          } catch {
             const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
             if (refreshToken) {
               try {
-                const refreshResponse = await axios.post(`${API_URL}/auth/refresh`, {
-                  refreshToken,
-                });
-                localStorage.setItem(TOKEN_KEY, refreshResponse.data.accessToken);
-                const userResponse = await axios.get(`${API_URL}/auth/me`, {
-                  headers: {
-                    Authorization: `Bearer ${refreshResponse.data.accessToken}`,
-                  },
-                });
-                setUser(userResponse.data.user);
+                const refreshResponse = await authRefresh(refreshToken);
+                localStorage.setItem(TOKEN_KEY, refreshResponse.accessToken);
+                if (refreshResponse.refreshToken) {
+                  localStorage.setItem(REFRESH_TOKEN_KEY, refreshResponse.refreshToken);
+                }
+                const userResponse = await authMe(refreshResponse.accessToken);
+                setUser(userResponse.user);
               } catch {
-                // Refresh failed, clear auth but don't navigate during initial load
                 localStorage.removeItem(TOKEN_KEY);
                 localStorage.removeItem(REFRESH_TOKEN_KEY);
                 localStorage.removeItem(USER_KEY);
                 setUser(null);
               }
             } else {
-              // No refresh token, clear auth
               localStorage.removeItem(TOKEN_KEY);
               localStorage.removeItem(REFRESH_TOKEN_KEY);
               localStorage.removeItem(USER_KEY);
@@ -128,7 +118,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
       } catch (error) {
         console.error('Failed to load user:', error);
-        // Clear auth on error
         localStorage.removeItem(TOKEN_KEY);
         localStorage.removeItem(REFRESH_TOKEN_KEY);
         localStorage.removeItem(USER_KEY);
@@ -146,12 +135,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (authEnabled === false) {
         throw new Error("Authentication is disabled");
       }
-      const response = await axios.post(`${API_URL}/auth/login`, {
-        email,
-        password,
-      });
+      const response = await authLogin(email, password);
 
-      const { user: userData, accessToken, refreshToken } = response.data;
+      const { user: userData, accessToken, refreshToken } = response;
 
       localStorage.setItem(TOKEN_KEY, accessToken);
       localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
@@ -159,8 +145,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       setUser(userData);
     } catch (error: unknown) {
-      if (axios.isAxiosError(error)) {
-        const message = 
+      if (isAxiosError(error)) {
+        const message =
           typeof error.response?.data === 'object' &&
           error.response.data !== null &&
           'message' in error.response.data &&
@@ -178,13 +164,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (authEnabled === false) {
         throw new Error("Authentication is disabled");
       }
-      const response = await axios.post(`${API_URL}/auth/register`, {
-        email,
-        password,
-        name,
-      });
+      const response = await authRegister(email, password, name);
 
-      const { user: userData, accessToken, refreshToken } = response.data;
+      const { user: userData, accessToken, refreshToken } = response;
 
       localStorage.setItem(TOKEN_KEY, accessToken);
       localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
@@ -192,8 +174,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       setUser(userData);
     } catch (error: unknown) {
-      if (axios.isAxiosError(error)) {
-        const message = 
+      if (isAxiosError(error)) {
+        const message =
           typeof error.response?.data === 'object' &&
           error.response.data !== null &&
           'message' in error.response.data &&
@@ -211,7 +193,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     localStorage.removeItem(REFRESH_TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
     setUser(null);
-    // Navigate to login - use setTimeout to ensure Router is ready
     setTimeout(() => {
       navigate('/login');
     }, 0);

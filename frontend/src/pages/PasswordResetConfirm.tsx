@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
-import axios from 'axios';
 import { Logo } from '../components/Logo';
-
-const API_URL = import.meta.env.VITE_API_URL || "/api";
+import { authPasswordResetConfirm, isAxiosError } from '../api';
 
 export const PasswordResetConfirm: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -44,17 +42,14 @@ export const PasswordResetConfirm: React.FC = () => {
     setLoading(true);
 
     try {
-      await axios.post(`${API_URL}/auth/password-reset-confirm`, {
-        token,
-        password,
-      });
+      await authPasswordResetConfirm(token, password);
       setSuccess(true);
       setTimeout(() => {
         navigate('/login');
       }, 3000);
     } catch (err: unknown) {
       let message = 'Failed to reset password';
-      if (axios.isAxiosError(err)) {
+      if (isAxiosError(err)) {
         if (err.response?.status === 404) {
           message = 'Password reset feature is not enabled on this server';
         } else if (err.response?.data?.message) {

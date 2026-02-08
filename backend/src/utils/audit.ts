@@ -1,13 +1,12 @@
 /**
  * Audit logging utility for security events
  */
-import { PrismaClient } from "../generated/client";
+import { prisma } from "../db/prisma";
 
-let prisma: PrismaClient | null = null;
-const getPrisma = () => {
-  if (prisma) return prisma;
-  prisma = new PrismaClient();
-  return prisma;
+let prismaProvider: () => typeof prisma = () => prisma;
+
+export const setAuditPrismaProvider = (provider: (() => typeof prisma) | null): void => {
+  prismaProvider = provider ?? (() => prisma);
 };
 
 export interface AuditLogData {
@@ -44,7 +43,7 @@ export const logAuditEvent = async (data: AuditLogData): Promise<void> => {
       return; // Feature disabled, silently skip
     }
 
-    await getPrisma().auditLog.create({
+    await prismaProvider().auditLog.create({
       data: {
         userId: data.userId || null,
         action: data.action,
@@ -79,7 +78,7 @@ export const getAuditLogs = async (
       return []; // Feature disabled, return empty array
     }
 
-    const logs = await getPrisma().auditLog.findMany({
+    const logs = await prismaProvider().auditLog.findMany({
       where: userId ? { userId } : undefined,
       orderBy: { createdAt: "desc" },
       take: limit,

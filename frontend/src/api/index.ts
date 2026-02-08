@@ -73,6 +73,84 @@ export const clearCsrfToken = (): void => {
   csrfToken = null;
 };
 
+export interface AuthStatusResponse {
+  authEnabled?: boolean;
+  enabled?: boolean;
+  bootstrapRequired?: boolean;
+}
+
+export interface AuthUser {
+  id: string;
+  username?: string | null;
+  email: string;
+  name: string;
+  role?: string;
+  mustResetPassword?: boolean;
+}
+
+export const authStatus = async (): Promise<AuthStatusResponse> => {
+  const response = await axios.get<AuthStatusResponse>(
+    `${API_URL}/auth/status`,
+    { withCredentials: true }
+  );
+  return response.data;
+};
+
+export const authMe = async (accessToken: string): Promise<{ user: AuthUser }> => {
+  const response = await axios.get<{ user: AuthUser }>(`${API_URL}/auth/me`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    withCredentials: true,
+  });
+  return response.data;
+};
+
+export const authRefresh = async (
+  refreshToken: string
+): Promise<{ accessToken: string; refreshToken?: string }> => {
+  const response = await axios.post<{ accessToken: string; refreshToken?: string }>(
+    `${API_URL}/auth/refresh`,
+    { refreshToken },
+    { withCredentials: true }
+  );
+  return response.data;
+};
+
+export const authLogin = async (
+  email: string,
+  password: string
+): Promise<{ user: AuthUser; accessToken: string; refreshToken: string }> => {
+  const response = await axios.post<{ user: AuthUser; accessToken: string; refreshToken: string }>(
+    `${API_URL}/auth/login`,
+    { email, password },
+    { withCredentials: true }
+  );
+  return response.data;
+};
+
+export const authRegister = async (
+  email: string,
+  password: string,
+  name: string
+): Promise<{ user: AuthUser; accessToken: string; refreshToken: string }> => {
+  const response = await axios.post<{ user: AuthUser; accessToken: string; refreshToken: string }>(
+    `${API_URL}/auth/register`,
+    { email, password, name },
+    { withCredentials: true }
+  );
+  return response.data;
+};
+
+export const authPasswordResetConfirm = async (
+  token: string,
+  password: string
+): Promise<void> => {
+  await axios.post(
+    `${API_URL}/auth/password-reset-confirm`,
+    { token, password },
+    { withCredentials: true }
+  );
+};
+
 const clearStoredAuth = () => {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(REFRESH_TOKEN_KEY);
@@ -100,15 +178,12 @@ const getAuthEnabledStatus = async (): Promise<boolean | null> => {
   }
 
   try {
-    const response = await axios.get<{ authEnabled?: boolean; enabled?: boolean }>(
-      `${API_URL}/auth/status`,
-      { withCredentials: true }
-    );
+    const response = await authStatus();
     const enabled =
-      typeof response.data?.authEnabled === "boolean"
-        ? response.data.authEnabled
-        : typeof response.data?.enabled === "boolean"
-          ? response.data.enabled
+      typeof response?.authEnabled === "boolean"
+        ? response.authEnabled
+        : typeof response?.enabled === "boolean"
+          ? response.enabled
           : true;
     cacheAuthEnabled(enabled);
     return enabled;
@@ -135,22 +210,16 @@ const refreshAccessToken = async (): Promise<string> => {
         throw new Error("Missing refresh token");
       }
 
-      const refreshResponse = await axios.post(
-        `${API_URL}/auth/refresh`,
-        {
-          refreshToken,
-        },
-        { withCredentials: true }
-      );
+      const refreshResponse = await authRefresh(refreshToken);
 
-      const nextAccessToken = String(refreshResponse.data.accessToken || "");
+      const nextAccessToken = String(refreshResponse.accessToken || "");
       if (!nextAccessToken) {
         throw new Error("Missing access token in refresh response");
       }
 
       localStorage.setItem(TOKEN_KEY, nextAccessToken);
-      if (refreshResponse.data.refreshToken) {
-        localStorage.setItem(REFRESH_TOKEN_KEY, refreshResponse.data.refreshToken);
+      if (refreshResponse.refreshToken) {
+        localStorage.setItem(REFRESH_TOKEN_KEY, refreshResponse.refreshToken);
       }
 
       return nextAccessToken;

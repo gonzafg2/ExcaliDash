@@ -2,81 +2,8 @@ import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { config } from "../config";
 import { PrismaClient } from "../generated/client";
-
-const prisma = new PrismaClient();
-const DEFAULT_SYSTEM_CONFIG_ID = "default";
-const BOOTSTRAP_USER_ID = "bootstrap-admin";
-
-type AuthEnabledCache = {
-  value: boolean;
-  fetchedAt: number;
-};
-
-let authEnabledCache: AuthEnabledCache | null = null;
-const AUTH_ENABLED_TTL_MS = 5000;
-
-const getAuthEnabled = async (): Promise<boolean> => {
-  const now = Date.now();
-  if (authEnabledCache && now - authEnabledCache.fetchedAt < AUTH_ENABLED_TTL_MS) {
-    return authEnabledCache.value;
-  }
-
-  let systemConfig = await prisma.systemConfig.findUnique({
-    where: { id: DEFAULT_SYSTEM_CONFIG_ID },
-    select: { authEnabled: true },
-  });
-
-  if (!systemConfig) {
-    try {
-      systemConfig = await prisma.systemConfig.create({
-        data: {
-          id: DEFAULT_SYSTEM_CONFIG_ID,
-          authEnabled: false,
-          registrationEnabled: false,
-        },
-        select: { authEnabled: true },
-      });
-    } catch {
-      // Handle race from concurrent initialization.
-      systemConfig = await prisma.systemConfig.findUnique({
-        where: { id: DEFAULT_SYSTEM_CONFIG_ID },
-        select: { authEnabled: true },
-      });
-      if (!systemConfig) {
-        throw new Error("Failed to initialize system config");
-      }
-    }
-  }
-
-  authEnabledCache = { value: systemConfig.authEnabled, fetchedAt: now };
-  return systemConfig.authEnabled;
-};
-
-const getBootstrapActingUser = async () => {
-  return prisma.user.upsert({
-    where: { id: BOOTSTRAP_USER_ID },
-    update: {},
-    create: {
-      id: BOOTSTRAP_USER_ID,
-      email: "bootstrap@excalidash.local",
-      username: null,
-      passwordHash: "",
-      name: "Bootstrap Admin",
-      role: "ADMIN",
-      mustResetPassword: true,
-      isActive: false,
-    },
-    select: {
-      id: true,
-      username: true,
-      email: true,
-      name: true,
-      role: true,
-      mustResetPassword: true,
-      isActive: true,
-    },
-  });
-};
+import { prisma as defaultPrisma } from "../db/prisma";
+import { createAuthModeService, type AuthModeService } from "../auth/authMode";
 
 // Extend Express Request type to include user
 declare global {
@@ -161,150 +88,97 @@ const isAllowedWhileMustResetPassword = (req: Request): boolean => {
   return false;
 };
 
-export const requireAuth = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
-  // Single-user mode: authentication disabled -> treat all requests as the bootstrap user.
-  try {
-    const authEnabled = await getAuthEnabled();
-    if (!authEnabled) {
-      const user = await getBootstrapActingUser();
-      req.user = {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        mustResetPassword: user.mustResetPassword,
-      };
-      return next();
-    }
-  } catch (error) {
-    console.error("Error reading auth mode:", error);
-    res.status(500).json({
-      error: "Internal server error",
-      message: "Failed to read authentication mode",
-    });
-    return;
-  }
-
-  const token = extractToken(req);
-
-  if (!token) {
-    res.status(401).json({
-      error: "Unauthorized",
-      message: "Authentication token required",
-    });
-    return;
-  }
-
-  const payload = verifyToken(token);
-
-  if (!payload) {
-    res.status(401).json({
-      error: "Unauthorized",
-      message: "Invalid or expired token",
-    });
-    return;
-  }
-
-  // Verify user still exists and is active
-  try {
-    const user = await prisma.user.findUnique({
-      where: { id: payload.userId },
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        name: true,
-        role: true,
-        mustResetPassword: true,
-        isActive: true,
-      },
-    });
-
-    if (!user || !user.isActive) {
-      res.status(401).json({
-        error: "Unauthorized",
-        message: "User account not found or inactive",
-      });
-      return;
-    }
-
-    if (user.mustResetPassword && !isAllowedWhileMustResetPassword(req)) {
-      res.status(403).json({
-        error: "Forbidden",
-        code: "MUST_RESET_PASSWORD",
-        message: "You must reset your password before using the app",
-      });
-      return;
-    }
-
-    // Attach user to request
-    req.user = {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      mustResetPassword: user.mustResetPassword,
-      impersonatorId: payload.impersonatorId,
-    };
-
-    next();
-  } catch (error) {
-    console.error("Error verifying user:", error);
-    res.status(500).json({
-      error: "Internal server error",
-      message: "Failed to verify user",
-    });
-  }
+export type AuthMiddlewareDeps = {
+  prisma: PrismaClient;
+  authModeService: AuthModeService;
 };
 
-export const optionalAuth = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
-  try {
-    const authEnabled = await getAuthEnabled();
-    if (!authEnabled) {
-      return next();
+export const createAuthMiddleware = ({
+  prisma,
+  authModeService,
+}: AuthMiddlewareDeps) => {
+  const requireAuth = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    // Single-user mode: authentication disabled -> treat all requests as the bootstrap user.
+    try {
+      const authEnabled = await authModeService.getAuthEnabled();
+      if (!authEnabled) {
+        const user = await authModeService.getBootstrapActingUser();
+        req.user = {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          mustResetPassword: user.mustResetPassword,
+        };
+        return next();
+      }
+    } catch (error) {
+      console.error("Error reading auth mode:", error);
+      res.status(500).json({
+        error: "Internal server error",
+        message: "Failed to read authentication mode",
+      });
+      return;
     }
-  } catch (error) {
-    console.error("Error reading auth mode:", error);
-    return next();
-  }
 
-  const token = extractToken(req);
+    const token = extractToken(req);
 
-  if (!token) {
-    return next();
-  }
+    if (!token) {
+      res.status(401).json({
+        error: "Unauthorized",
+        message: "Authentication token required",
+      });
+      return;
+    }
 
-  const payload = verifyToken(token);
+    const payload = verifyToken(token);
 
-  if (!payload) {
-    return next();
-  }
+    if (!payload) {
+      res.status(401).json({
+        error: "Unauthorized",
+        message: "Invalid or expired token",
+      });
+      return;
+    }
 
-  try {
-    const user = await prisma.user.findUnique({
-      where: { id: payload.userId },
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        name: true,
-        role: true,
-        mustResetPassword: true,
-        isActive: true,
-      },
-    });
+    // Verify user still exists and is active
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: payload.userId },
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          name: true,
+          role: true,
+          mustResetPassword: true,
+          isActive: true,
+        },
+      });
 
-    if (user && user.isActive) {
+      if (!user || !user.isActive) {
+        res.status(401).json({
+          error: "Unauthorized",
+          message: "User account not found or inactive",
+        });
+        return;
+      }
+
+      if (user.mustResetPassword && !isAllowedWhileMustResetPassword(req)) {
+        res.status(403).json({
+          error: "Forbidden",
+          code: "MUST_RESET_PASSWORD",
+          message: "You must reset your password before using the app",
+        });
+        return;
+      }
+
+      // Attach user to request
       req.user = {
         id: user.id,
         username: user.username,
@@ -314,11 +188,89 @@ export const optionalAuth = async (
         mustResetPassword: user.mustResetPassword,
         impersonatorId: payload.impersonatorId,
       };
-    }
-  } catch (error) {
-    // Silently fail for optional auth
-    console.error("Error in optional auth:", error);
-  }
 
-  next();
+      next();
+    } catch (error) {
+      console.error("Error verifying user:", error);
+      res.status(500).json({
+        error: "Internal server error",
+        message: "Failed to verify user",
+      });
+    }
+  };
+
+  const optionalAuth = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const authEnabled = await authModeService.getAuthEnabled();
+      if (!authEnabled) {
+        return next();
+      }
+    } catch (error) {
+      console.error("Error reading auth mode:", error);
+      return next();
+    }
+
+    const token = extractToken(req);
+
+    if (!token) {
+      return next();
+    }
+
+    const payload = verifyToken(token);
+
+    if (!payload) {
+      return next();
+    }
+
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: payload.userId },
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          name: true,
+          role: true,
+          mustResetPassword: true,
+          isActive: true,
+        },
+      });
+
+      if (user && user.isActive) {
+        req.user = {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          mustResetPassword: user.mustResetPassword,
+          impersonatorId: payload.impersonatorId,
+        };
+      }
+    } catch (error) {
+      // Silently fail for optional auth
+      console.error("Error in optional auth:", error);
+    }
+
+    next();
+  };
+
+  return {
+    requireAuth,
+    optionalAuth,
+  };
 };
+
+const defaultAuthModeService = createAuthModeService(defaultPrisma);
+const defaultAuthMiddleware = createAuthMiddleware({
+  prisma: defaultPrisma,
+  authModeService: defaultAuthModeService,
+});
+
+export const authModeService = defaultAuthModeService;
+export const requireAuth = defaultAuthMiddleware.requireAuth;
+export const optionalAuth = defaultAuthMiddleware.optionalAuth;

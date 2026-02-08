@@ -4,14 +4,13 @@ import { DrawingCard } from '../components/DrawingCard';
 import { Plus, Search, Loader2, Inbox, Trash2, Folder, ArrowRight, Copy, Upload, CheckSquare, Square, ArrowUp, ArrowDown, ChevronDown, FileText, Calendar, Clock } from 'lucide-react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import * as api from '../api';
-import type { DrawingSummary, Collection } from '../types';
 import type { DrawingSortField, SortDirection } from '../api';
 import { useDebounce } from '../hooks/useDebounce';
 import clsx from 'clsx';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { useUpload } from '../context/UploadContext';
 import { DragOverlayPortal, getSelectionBounds, type Point, type SelectionBounds } from './dashboard/shared';
-import { isLatestRequest, mergeUniqueDrawings } from './dashboard/pagination';
+import { useDashboardData } from './dashboard/useDashboardData';
 
 const PAGE_SIZE = 24;
 
@@ -19,10 +18,6 @@ export const Dashboard: React.FC = () => {
   const [searchParams] = useSearchParams();
   const location = useLocation();
   const navigate = useNavigate();
-  const [drawings, setDrawings] = useState<DrawingSummary[]>([]);
-  const [collections, setCollections] = useState<Collection[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
-  const [isFetchingMore, setIsFetchingMore] = useState(false);
 
   const selectedCollectionId = React.useMemo(() => {
     if (location.pathname === '/') return undefined;
@@ -73,73 +68,29 @@ export const Dashboard: React.FC = () => {
     direction: 'desc'
   });
 
-  const [isLoading, setIsLoading] = useState(false);
-  const listRequestVersionRef = useRef(0);
-
   const { uploadFiles } = useUpload();
-
-  const hasMore = drawings.length < totalCount;
-
-  const refreshData = useCallback(async () => {
-    const requestVersion = ++listRequestVersionRef.current;
-    setIsLoading(true);
-    try {
-      const [drawingsRes, collectionsData] = await Promise.all([
-        api.getDrawings(debouncedSearch, selectedCollectionId, {
-          limit: PAGE_SIZE,
-          offset: 0,
-          sortField: sortConfig.field,
-          sortDirection: sortConfig.direction,
-        }),
-        api.getCollections()
-      ]);
-      if (!isLatestRequest(requestVersion, listRequestVersionRef.current)) return;
-      setDrawings(drawingsRes.drawings);
-      setTotalCount(drawingsRes.totalCount);
-      setCollections(collectionsData);
-      setSelectedIds(new Set());
-    } catch (err) {
-      console.error('Failed to fetch data:', err);
-    } finally {
-      if (isLatestRequest(requestVersion, listRequestVersionRef.current)) {
-        setIsLoading(false);
-      }
-    }
-  }, [debouncedSearch, selectedCollectionId, sortConfig.field, sortConfig.direction]);
-
-  const fetchMore = useCallback(async () => {
-    if (isFetchingMore || !hasMore || isLoading) return;
-    const requestVersion = listRequestVersionRef.current;
-    setIsFetchingMore(true);
-    try {
-      const drawingsRes = await api.getDrawings(debouncedSearch, selectedCollectionId, {
-        limit: PAGE_SIZE,
-        offset: drawings.length,
-        sortField: sortConfig.field,
-        sortDirection: sortConfig.direction,
-      });
-      if (!isLatestRequest(requestVersion, listRequestVersionRef.current)) return;
-      setDrawings(prev => mergeUniqueDrawings(prev, drawingsRes.drawings));
-      setTotalCount(drawingsRes.totalCount);
-    } catch (err) {
-      console.error('Failed to fetch more data:', err);
-    } finally {
-      setIsFetchingMore(false);
-    }
-  }, [
+  const resetSelection = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
+  const {
+    drawings,
+    setDrawings,
+    collections,
+    setCollections,
+    setTotalCount,
     isFetchingMore,
-    hasMore,
     isLoading,
+    hasMore,
+    refreshData,
+    fetchMore,
+  } = useDashboardData({
     debouncedSearch,
     selectedCollectionId,
-    drawings.length,
-    sortConfig.field,
-    sortConfig.direction,
-  ]);
-
-  useEffect(() => {
-    refreshData();
-  }, [refreshData]);
+    sortField: sortConfig.field,
+    sortDirection: sortConfig.direction,
+    pageSize: PAGE_SIZE,
+    onRefreshSuccess: resetSelection,
+  });
 
   // Infinite scroll observer
   useEffect(() => {
