@@ -91,6 +91,47 @@ export const Editor: React.FC = () => {
     return latestElementsRef.current;
   }, []);
 
+  const hasIntentionalDeletionDelta = useCallback(
+    (baseline: readonly any[] = [], candidate: readonly any[] = []): boolean => {
+      if (!Array.isArray(candidate) || candidate.length === 0) return false;
+      if (!hasRenderableElements(baseline)) return false;
+      if (hasRenderableElements(candidate)) return false;
+
+      const baselineById = new Map(
+        baseline.map((element: any) => [element?.id, element])
+      );
+
+      const getVersion = (element: any): number =>
+        typeof element?.version === "number" ? element.version : 0;
+      const getUpdated = (element: any): number => {
+        const value = element?.updated;
+        return typeof value === "number" ? value : Number(value) || 0;
+      };
+
+      return candidate.some((element: any) => {
+        if (!element || element.isDeleted !== true || typeof element.id !== "string") {
+          return false;
+        }
+
+        const previous = baselineById.get(element.id);
+        if (!previous) return false;
+        if (previous.isDeleted === true) return false;
+
+        const nextVersion = getVersion(element);
+        const prevVersion = getVersion(previous);
+        if (nextVersion > prevVersion) return true;
+
+        const nextUpdated = getUpdated(element);
+        const prevUpdated = getUpdated(previous);
+        if (nextVersion === prevVersion && nextUpdated > prevUpdated) return true;
+
+        // Fallback for callers that may not bump version/updated consistently.
+        return nextVersion === prevVersion && nextUpdated === prevUpdated;
+      });
+    },
+    []
+  );
+
   const resolveSafeSnapshot = useCallback(
     (candidateSnapshot: readonly any[] = []) => {
       const baseline = getRenderableBaselineSnapshot();
@@ -99,8 +140,11 @@ export const Editor: React.FC = () => {
         baseline,
         candidateSnapshot
       );
+      const intentionalDeletionDelta = staleNonRenderableSnapshot
+        ? hasIntentionalDeletionDelta(baseline, candidateSnapshot)
+        : false;
 
-      if (staleEmptySnapshot || staleNonRenderableSnapshot) {
+      if (staleEmptySnapshot || (staleNonRenderableSnapshot && !intentionalDeletionDelta)) {
         return {
           snapshot: baseline,
           prevented: true,
@@ -307,7 +351,7 @@ export const Editor: React.FC = () => {
       if (shouldUpdateFiles && typeof excalidrawAPI.current.addFiles === "function") {
         // Excalidraw manages binary files separately from scene elements; updateScene(files)
         // is not reliable for syncing pasted images across tabs.
-        excalidrawAPI.current.addFiles(incomingFiles);
+        excalidrawAPI.current.addFiles(Object.values(incomingFiles));
       }
 
       excalidrawAPI.current.updateScene({ elements: mergedElements });
@@ -378,8 +422,11 @@ export const Editor: React.FC = () => {
     if (api && typeof api.addFiles === "function" && !patchedAddFilesApisRef.current.has(api as object)) {
       patchedAddFilesApisRef.current.add(api as object);
       const originalAddFiles = api.addFiles.bind(api);
-      api.addFiles = (files: Record<string, any>) => {
-        originalAddFiles(files);
+      api.addFiles = (filesInput: Record<string, any> | any[]) => {
+        const normalizedFiles = Array.isArray(filesInput)
+          ? filesInput
+          : Object.values(filesInput || {});
+        originalAddFiles(normalizedFiles);
 
         // Avoid rebroadcast loops when we are applying remote updates.
         if (isSyncing.current) return;

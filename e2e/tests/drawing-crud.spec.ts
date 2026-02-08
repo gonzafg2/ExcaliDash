@@ -18,6 +18,12 @@ import {
  * - Auto-save functionality
  */
 
+const revealEditorHeader = async (page: import("@playwright/test").Page) => {
+  // Editor header auto-hides after a short delay unless pointer is near the top edge.
+  await page.mouse.move(24, 2);
+  await page.waitForTimeout(150);
+};
+
 test.describe("Drawing Creation", () => {
   let createdDrawingIds: string[] = [];
 
@@ -104,8 +110,11 @@ test.describe("Drawing Creation", () => {
     await page.goto(`/editor/${drawing.id}`);
     await page.waitForSelector("[class*='excalidraw'], canvas", { timeout: 15000 });
 
+    await revealEditorHeader(page);
+
     // Click on the drawing name to edit it - it's a button that becomes an input
     const nameElement = page.getByText(originalName);
+    await expect(nameElement).toBeInViewport();
     await nameElement.dblclick();
 
     // Wait for edit mode
@@ -132,9 +141,12 @@ test.describe("Drawing Creation", () => {
     await page.goto(`/editor/${drawing.id}`);
     await page.waitForSelector("[class*='excalidraw'], canvas", { timeout: 15000 });
 
+    await revealEditorHeader(page);
+
     // Find and click the back button (arrow left icon in header)
     // The back button is a button element containing an ArrowLeft icon
     const backButton = page.locator("header button").first();
+    await expect(backButton).toBeInViewport();
     await backButton.click();
 
     // Should navigate back to dashboard

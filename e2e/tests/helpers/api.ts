@@ -13,11 +13,20 @@ type CsrfTokenResponse = {
 type CsrfInfo = {
   token: string;
   headerName: string;
+  cookieHeader: string;
 };
 
-// Cache CSRF tokens per Playwright request context so parallel tests don't race.
-const csrfInfoByRequest = new WeakMap<APIRequestContext, CsrfInfo>();
-const csrfFetchByRequest = new WeakMap<APIRequestContext, Promise<CsrfInfo>>();
+let sharedCsrfInfo: CsrfInfo | null = null;
+let sharedCsrfFetch: Promise<CsrfInfo> | null = null;
+
+const extractCookieHeader = (response: { headersArray: () => Array<{ name: string; value: string }> }): string => {
+  const cookiePairs = response
+    .headersArray()
+    .filter((h) => h.name.toLowerCase() === "set-cookie")
+    .map((h) => h.value.split(";")[0] || "")
+    .filter((v) => v.length > 0);
+  return cookiePairs.join("; ");
+};
 
 const fetchCsrfInfo = async (request: APIRequestContext): Promise<CsrfInfo> => {
   const response = await request.get(`${API_URL}/csrf-token`);
@@ -38,48 +47,50 @@ const fetchCsrfInfo = async (request: APIRequestContext): Promise<CsrfInfo> => {
       ? data.header
       : "x-csrf-token";
 
-  return { token: data.token, headerName };
+  const cookieHeader = extractCookieHeader(response);
+  if (!cookieHeader) {
+    throw new Error("Failed to fetch CSRF token: missing csrf client cookie");
+  }
+
+  return { token: data.token, headerName, cookieHeader };
 };
 
 const getCsrfInfo = async (request: APIRequestContext): Promise<CsrfInfo> => {
-  const cached = csrfInfoByRequest.get(request);
-  if (cached) return cached;
+  if (sharedCsrfInfo) return sharedCsrfInfo;
+  if (sharedCsrfFetch) return sharedCsrfFetch;
 
-  const inFlight = csrfFetchByRequest.get(request);
-  if (inFlight) return inFlight;
-
-  const promise = fetchCsrfInfo(request)
+  sharedCsrfFetch = fetchCsrfInfo(request)
     .then((info) => {
-      csrfInfoByRequest.set(request, info);
+      sharedCsrfInfo = info;
       return info;
     })
     .finally(() => {
-      csrfFetchByRequest.delete(request);
+      sharedCsrfFetch = null;
     });
 
-  csrfFetchByRequest.set(request, promise);
-  return promise;
+  return sharedCsrfFetch;
 };
 
 const refreshCsrfInfo = async (request: APIRequestContext): Promise<CsrfInfo> => {
-  const promise = fetchCsrfInfo(request)
+  sharedCsrfFetch = fetchCsrfInfo(request)
     .then((info) => {
-      csrfInfoByRequest.set(request, info);
+      sharedCsrfInfo = info;
       return info;
     })
     .finally(() => {
-      csrfFetchByRequest.delete(request);
+      sharedCsrfFetch = null;
     });
-
-  csrfFetchByRequest.set(request, promise);
-  return promise;
+  return sharedCsrfFetch;
 };
 
 export async function getCsrfHeaders(
   request: APIRequestContext
 ): Promise<Record<string, string>> {
   const info = await getCsrfInfo(request);
-  return { [info.headerName]: info.token };
+  return {
+    [info.headerName]: info.token,
+    Cookie: info.cookieHeader,
+  };
 }
 
 const withCsrfHeaders = async (
