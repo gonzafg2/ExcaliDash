@@ -76,8 +76,8 @@ export const Settings: React.FC = () => {
             );
 
             if (response.data.authEnabled) {
-                // Auth enabled -> prompt admin bootstrap via register.
-                window.location.href = '/register';
+                // Auth enabled -> bootstrap registration only when required.
+                window.location.href = response.data.bootstrapRequired ? '/register' : '/login';
                 return;
             }
 

@@ -81,6 +81,7 @@ export const createAuthRouter = (deps: CreateAuthRouterDeps): express.Router => 
   let loginRateLimitConfig: LoginRateLimitConfig = { ...DEFAULT_LOGIN_RATE_LIMIT };
   let loginAttemptLimiter: ReturnType<typeof rateLimit> | null = null;
   let loginLimiterInitPromise: Promise<void> | null = null;
+  let loginIdentifierKeyIndex = new Map<string, Set<string>>();
 
   const parseLoginRateLimitConfig = (
     systemConfig: Awaited<ReturnType<typeof ensureSystemConfig>>
@@ -114,8 +115,31 @@ export const createAuthRouter = (deps: CreateAuthRouterDeps): express.Router => 
     return trimmed.length > 0 ? trimmed.slice(0, 255) : null;
   };
 
+  const resolveRateLimitIp = (req: Request): string =>
+    (req.ip || req.connection.remoteAddress || "unknown").slice(0, 255);
+
+  const trackIdentifierRateLimitKey = (identifier: string, key: string): void => {
+    if (!loginIdentifierKeyIndex.has(identifier) && loginIdentifierKeyIndex.size >= 5000) {
+      const oldestIdentifier = loginIdentifierKeyIndex.keys().next().value;
+      if (typeof oldestIdentifier === "string") {
+        loginIdentifierKeyIndex.delete(oldestIdentifier);
+      }
+    }
+
+    const existing = loginIdentifierKeyIndex.get(identifier) ?? new Set<string>();
+    if (existing.size >= 50) {
+      const oldestKey = existing.values().next().value;
+      if (typeof oldestKey === "string") {
+        existing.delete(oldestKey);
+      }
+    }
+    existing.add(key);
+    loginIdentifierKeyIndex.set(identifier, existing);
+  };
+
   const buildLoginAttemptLimiter = (cfg: LoginRateLimitConfig) => {
     const store = new MemoryStore();
+    loginIdentifierKeyIndex = new Map<string, Set<string>>();
     const limiter = rateLimit({
       windowMs: cfg.windowMs,
       max: cfg.max,
@@ -131,8 +155,12 @@ export const createAuthRouter = (deps: CreateAuthRouterDeps): express.Router => 
       store,
       keyGenerator: (req) => {
         const identifier = resolveAuthIdentifier(req as Request);
-        if (identifier) return `login:${identifier}`;
-        const ip = (req as Request).ip || "unknown";
+        const ip = resolveRateLimitIp(req as Request);
+        if (identifier) {
+          const key = `login:${identifier}:ip:${ip}`;
+          trackIdentifierRateLimitKey(identifier, key);
+          return key;
+        }
         return `login-ip:${ip}`;
       },
     });
@@ -171,9 +199,18 @@ export const createAuthRouter = (deps: CreateAuthRouterDeps): express.Router => 
 
   const resetLoginAttemptKey = async (identifier: string): Promise<void> => {
     await ensureLoginAttemptLimiter();
-    const key = `login:${identifier}`;
+    const normalizedIdentifier = identifier.trim().toLowerCase();
+    const keys = loginIdentifierKeyIndex.get(normalizedIdentifier);
     try {
-      await loginAttemptLimiter?.resetKey(key);
+      if (!keys || keys.size === 0) {
+        // Backward-compatible fallback for pre-change key format.
+        await loginAttemptLimiter?.resetKey(`login:${normalizedIdentifier}`);
+        return;
+      }
+      for (const key of keys) {
+        await loginAttemptLimiter?.resetKey(key);
+      }
+      loginIdentifierKeyIndex.delete(normalizedIdentifier);
     } catch (error) {
       if (process.env.NODE_ENV === "development") {
         console.debug("Rate limit reset skipped:", error);

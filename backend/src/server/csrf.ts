@@ -10,7 +10,6 @@ import {
   CSRF_CLIENT_COOKIE_NAME,
   getCsrfClientCookieValue,
   getCsrfValidationClientIds,
-  getLegacyClientId,
 } from "../security/csrfClient";
 
 const CSRF_CLIENT_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30; // 30 days
@@ -53,7 +52,7 @@ export const registerCsrfProtection = ({
   const getClientIdForTokenIssue = (
     req: express.Request,
     res: express.Response
-  ): { clientId: string; strategy: "cookie" | "legacy-bootstrap" } => {
+  ): { clientId: string; strategy: "cookie" } => {
     const existingCookieValue = getCsrfClientCookieValue(req);
     if (existingCookieValue) {
       return {
@@ -65,8 +64,8 @@ export const registerCsrfProtection = ({
     const generatedCookieValue = crypto.randomUUID().replace(/-/g, "");
     setCsrfClientCookie(req, res, generatedCookieValue);
     return {
-      clientId: getLegacyClientId(req),
-      strategy: "legacy-bootstrap",
+      clientId: `cookie:${generatedCookieValue}`,
+      strategy: "cookie",
     };
   };
 

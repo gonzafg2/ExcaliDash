@@ -11,6 +11,7 @@ describe("Auth Enabled Toggle Authorization", () => {
   const userAgent = "vitest-auth-enabled";
   let prisma: PrismaClient;
   let app: any;
+  let agent: any;
   let csrfHeaderName: string;
   let csrfToken: string;
   let regularUserToken: string;
@@ -79,7 +80,7 @@ describe("Auth Enabled Toggle Authorization", () => {
       signOptions
     );
 
-    const agent = request.agent(app);
+    agent = request.agent(app);
     const csrfRes = await agent
       .get("/csrf-token")
       .set("User-Agent", userAgent);
@@ -92,7 +93,7 @@ describe("Auth Enabled Toggle Authorization", () => {
   });
 
   it("rejects unauthenticated auth-enabled toggle when auth is enabled", async () => {
-    const response = await request(app)
+    const response = await agent
       .post("/auth/auth-enabled")
       .set("User-Agent", userAgent)
       .set(csrfHeaderName, csrfToken)
@@ -102,7 +103,7 @@ describe("Auth Enabled Toggle Authorization", () => {
   });
 
   it("rejects non-admin auth-enabled toggle", async () => {
-    const response = await request(app)
+    const response = await agent
       .post("/auth/auth-enabled")
       .set("User-Agent", userAgent)
       .set("Authorization", `Bearer ${regularUserToken}`)
@@ -120,7 +121,7 @@ describe("Auth Enabled Toggle Authorization", () => {
     expect(warmStatusResponse.status).toBe(200);
     expect(warmStatusResponse.body?.authEnabled).toBe(true);
 
-    const toggleResponse = await request(app)
+    const toggleResponse = await agent
       .post("/auth/auth-enabled")
       .set("User-Agent", userAgent)
       .set("Authorization", `Bearer ${adminUserToken}`)

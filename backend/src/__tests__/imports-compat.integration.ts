@@ -267,6 +267,7 @@ describe("Import compatibility (legacy exports)", () => {
   const userAgent = "vitest-import-compat";
   let prisma: ReturnType<typeof getTestPrisma>;
   let app: any;
+  let agent: any;
   let csrfHeaderName: string;
   let csrfToken: string;
 
@@ -278,7 +279,8 @@ describe("Import compatibility (legacy exports)", () => {
     // Import the server AFTER DATABASE_URL is set by setupTestDb/getTestPrisma.
     ({ app } = await import("../index"));
 
-    const csrfRes = await request(app).get("/csrf-token").set("User-Agent", userAgent);
+    agent = request.agent(app);
+    const csrfRes = await agent.get("/csrf-token").set("User-Agent", userAgent);
     csrfHeaderName = csrfRes.body.header;
     csrfToken = csrfRes.body.token;
     expect(typeof csrfHeaderName).toBe("string");
@@ -301,7 +303,7 @@ describe("Import compatibility (legacy exports)", () => {
       includeTrashDrawing: false,
     });
 
-    const res = await request(app)
+    const res = await agent
       .post("/import/sqlite/legacy/verify")
       .set("User-Agent", userAgent)
       .set(csrfHeaderName, csrfToken)
@@ -323,7 +325,7 @@ describe("Import compatibility (legacy exports)", () => {
       includeTrashDrawing: true,
     });
 
-    const res = await request(app)
+    const res = await agent
       .post("/import/sqlite/legacy")
       .set("User-Agent", userAgent)
       .set(csrfHeaderName, csrfToken)
@@ -359,7 +361,7 @@ describe("Import compatibility (legacy exports)", () => {
       includeTrashDrawing: false,
     });
 
-    const verify = await request(app)
+    const verify = await agent
       .post("/import/sqlite/legacy/verify")
       .set("User-Agent", userAgent)
       .set(csrfHeaderName, csrfToken)
@@ -369,7 +371,7 @@ describe("Import compatibility (legacy exports)", () => {
     expect(verify.body.drawings).toBe(2);
     expect(verify.body.collections).toBe(1);
 
-    const res = await request(app)
+    const res = await agent
       .post("/import/sqlite/legacy")
       .set("User-Agent", userAgent)
       .set(csrfHeaderName, csrfToken)
@@ -386,7 +388,7 @@ describe("Import compatibility (legacy exports)", () => {
     db.exec(`CREATE TABLE "NotDrawing" (id TEXT PRIMARY KEY NOT NULL);`);
     db.close();
 
-    const res = await request(app)
+    const res = await agent
       .post("/import/sqlite/legacy/verify")
       .set("User-Agent", userAgent)
       .set(csrfHeaderName, csrfToken)
@@ -398,7 +400,7 @@ describe("Import compatibility (legacy exports)", () => {
 
   it("rejects .excalidash verify when manifest has duplicate drawing IDs", async () => {
     const archive = await createExcalidashArchiveWithDuplicateDrawingIds();
-    const res = await request(app)
+    const res = await agent
       .post("/import/excalidash/verify")
       .set("User-Agent", userAgent)
       .set(csrfHeaderName, csrfToken)
@@ -410,7 +412,7 @@ describe("Import compatibility (legacy exports)", () => {
 
   it("rejects .excalidash import when manifest has duplicate drawing IDs", async () => {
     const archive = await createExcalidashArchiveWithDuplicateDrawingIds();
-    const res = await request(app)
+    const res = await agent
       .post("/import/excalidash")
       .set("User-Agent", userAgent)
       .set(csrfHeaderName, csrfToken)
@@ -422,7 +424,7 @@ describe("Import compatibility (legacy exports)", () => {
 
   it("rejects legacy verify when DB has duplicate drawing IDs", async () => {
     const legacyDb = createLegacySqliteDbWithDuplicateDrawingIds();
-    const res = await request(app)
+    const res = await agent
       .post("/import/sqlite/legacy/verify")
       .set("User-Agent", userAgent)
       .set(csrfHeaderName, csrfToken)
@@ -434,7 +436,7 @@ describe("Import compatibility (legacy exports)", () => {
 
   it("rejects legacy import when DB has duplicate drawing IDs", async () => {
     const legacyDb = createLegacySqliteDbWithDuplicateDrawingIds();
-    const res = await request(app)
+    const res = await agent
       .post("/import/sqlite/legacy")
       .set("User-Agent", userAgent)
       .set(csrfHeaderName, csrfToken)
