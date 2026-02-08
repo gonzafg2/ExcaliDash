@@ -30,6 +30,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const TOKEN_KEY = 'excalidash-access-token';
 const REFRESH_TOKEN_KEY = 'excalidash-refresh-token';
 const USER_KEY = 'excalidash-user';
+const AUTH_ENABLED_CACHE_KEY = "excalidash-auth-enabled";
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -52,6 +53,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 ? statusResponse.data.enabled
                 : true;
           setAuthEnabled(enabled);
+          localStorage.setItem(AUTH_ENABLED_CACHE_KEY, String(enabled));
           setBootstrapRequired(Boolean(statusResponse.data?.bootstrapRequired));
 
           // In single-user mode, do not require login.
@@ -63,8 +65,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
           }
         } catch {
-          // If status fails, default to auth-enabled mode to avoid exposing
-          // single-user UI paths accidentally. Backend remains the source of truth.
+          const cachedAuthEnabled = localStorage.getItem(AUTH_ENABLED_CACHE_KEY);
+          if (cachedAuthEnabled === "false") {
+            setAuthEnabled(false);
+            setBootstrapRequired(false);
+            localStorage.removeItem(TOKEN_KEY);
+            localStorage.removeItem(REFRESH_TOKEN_KEY);
+            localStorage.removeItem(USER_KEY);
+            setUser(null);
+            return;
+          }
+          // If status fails and no cached mode exists, default to auth-enabled mode.
           setAuthEnabled(true);
           setBootstrapRequired(false);
         }

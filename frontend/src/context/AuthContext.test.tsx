@@ -87,4 +87,43 @@ describe("AuthProvider", () => {
     expect(storage.get("excalidash-refresh-token")).toBeUndefined();
     expect(storage.get("excalidash-user")).toBeUndefined();
   });
+
+  it("uses cached auth-disabled mode when /auth/status is temporarily unavailable", async () => {
+    const storage = new Map<string, string>([
+      ["excalidash-auth-enabled", "false"],
+      ["excalidash-access-token", "token"],
+      ["excalidash-refresh-token", "refresh"],
+      ["excalidash-user", JSON.stringify({ id: "u1" })],
+    ]);
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: {
+        getItem: (key: string) => storage.get(key) ?? null,
+        setItem: (key: string, value: string) => {
+          storage.set(key, value);
+        },
+        removeItem: (key: string) => {
+          storage.delete(key);
+        },
+      },
+    });
+
+    vi.spyOn(axios, "get").mockRejectedValueOnce(new Error("network down"));
+
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <Probe />
+        </AuthProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("loading").textContent).toBe("false");
+    });
+    expect(screen.getByTestId("auth-enabled").textContent).toBe("false");
+    expect(storage.get("excalidash-access-token")).toBeUndefined();
+    expect(storage.get("excalidash-refresh-token")).toBeUndefined();
+    expect(storage.get("excalidash-user")).toBeUndefined();
+  });
 });

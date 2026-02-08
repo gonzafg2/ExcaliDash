@@ -707,8 +707,8 @@ export const sanitizeDrawingUpdateData = (
         collectionId: data.collectionId,
       };
       const sanitized = sanitizeDrawingData(fullData);
-      sanitizedData.elements = sanitized.elements;
-      sanitizedData.appState = sanitized.appState;
+      if (data.elements !== undefined) sanitizedData.elements = sanitized.elements;
+      if (data.appState !== undefined) sanitizedData.appState = sanitized.appState;
       if (data.files !== undefined) sanitizedData.files = sanitized.files;
       if (data.preview !== undefined) sanitizedData.preview = sanitized.preview;
       Object.assign(data, sanitizedData);

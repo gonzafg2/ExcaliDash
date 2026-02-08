@@ -267,10 +267,15 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
               expiresAt,
             },
           });
-        } catch {
-          if (process.env.NODE_ENV === "development") {
-            console.debug("Refresh token storage skipped (feature disabled or table missing)");
+        } catch (error) {
+          if (isMissingRefreshTokenTableError(error)) {
+            console.error("Refresh token rotation is enabled but refresh token storage is unavailable");
+            return res.status(503).json({
+              error: "Service unavailable",
+              message: "Refresh token storage is unavailable. Please run database migrations.",
+            });
           }
+          throw error;
         }
       }
 
@@ -380,10 +385,15 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
               expiresAt,
             },
           });
-        } catch {
-          if (process.env.NODE_ENV === "development") {
-            console.debug("Refresh token rotation skipped (feature disabled or table missing)");
+        } catch (error) {
+          if (isMissingRefreshTokenTableError(error)) {
+            console.error("Refresh token rotation is enabled but refresh token storage is unavailable");
+            return res.status(503).json({
+              error: "Service unavailable",
+              message: "Refresh token storage is unavailable. Please run database migrations.",
+            });
           }
+          throw error;
         }
       }
 
@@ -514,9 +524,11 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
             }
 
             if (isMissingRefreshTokenTableError(error)) {
-              if (process.env.NODE_ENV === "development") {
-                console.debug("Refresh token rotation skipped (feature disabled or table missing)");
-              }
+              console.error("Refresh token rotation is enabled but refresh token storage is unavailable");
+              return res.status(503).json({
+                error: "Service unavailable",
+                message: "Refresh token storage is unavailable. Please run database migrations.",
+              });
             } else {
               console.error("Refresh token rotation error:", error);
               return res.status(500).json({

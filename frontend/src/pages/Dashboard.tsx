@@ -719,7 +719,7 @@ export const Dashboard: React.FC = () => {
 
                 {d.preview ? (
                   <div
-                    className="w-full h-full p-2 flex items-center justify-center [&>svg]:w-full [&>svg]:h-full [&>svg]:object-contain [&>svg]:drop-shadow-sm relative z-10"
+                    className="w-full h-full p-2 flex items-center justify-center [&>svg]:w-auto [&>svg]:h-auto [&>svg]:max-w-full [&>svg]:max-h-full [&>svg]:drop-shadow-sm relative z-10"
                     dangerouslySetInnerHTML={{ __html: d.preview }}
                   />
                 ) : (

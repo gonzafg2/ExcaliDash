@@ -1,10 +1,12 @@
 import axios from "axios";
 import type { Drawing, Collection, DrawingSummary } from "../types";
+import { normalizePreviewSvg } from "../utils/previewSvg";
 
 export const API_URL = import.meta.env.VITE_API_URL || "/api";
 
 export const api = axios.create({
   baseURL: API_URL,
+  withCredentials: true,
 });
 
 // Re-export axios for type checking
@@ -18,13 +20,18 @@ export { api as default };
 const TOKEN_KEY = 'excalidash-access-token';
 const REFRESH_TOKEN_KEY = 'excalidash-refresh-token';
 const USER_KEY = 'excalidash-user';
+const AUTH_ENABLED_CACHE_KEY = "excalidash-auth-enabled";
+const AUTH_STATUS_TTL_MS = 5000;
 
 type RetriableRequestConfig = {
   _retry?: boolean;
   _csrfRetry?: boolean;
+  _authModeRetry?: boolean;
   url?: string;
   headers?: Record<string, string>;
 };
+
+let authEnabledProbeCache: { value: boolean; fetchedAt: number } | null = null;
 
 const getAuthToken = (): string | null => {
   if (typeof window === 'undefined') return null;
@@ -39,7 +46,8 @@ let csrfTokenPromise: Promise<void> | null = null;
 export const fetchCsrfToken = async (): Promise<void> => {
   try {
     const response = await axios.get<{ token: string; header: string }>(
-      `${API_URL}/csrf-token`
+      `${API_URL}/csrf-token`,
+      { withCredentials: true }
     );
     csrfToken = response.data.token;
     csrfHeaderName = response.data.header || "x-csrf-token";
@@ -71,7 +79,47 @@ const clearStoredAuth = () => {
   localStorage.removeItem(USER_KEY);
 };
 
-const redirectToLogin = () => {
+const readCachedAuthEnabled = (): boolean | null => {
+  if (typeof window === "undefined") return null;
+  const raw = localStorage.getItem(AUTH_ENABLED_CACHE_KEY);
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return null;
+};
+
+const cacheAuthEnabled = (enabled: boolean) => {
+  if (typeof window === "undefined") return;
+  authEnabledProbeCache = { value: enabled, fetchedAt: Date.now() };
+  localStorage.setItem(AUTH_ENABLED_CACHE_KEY, String(enabled));
+};
+
+const getAuthEnabledStatus = async (): Promise<boolean | null> => {
+  const now = Date.now();
+  if (authEnabledProbeCache && now - authEnabledProbeCache.fetchedAt < AUTH_STATUS_TTL_MS) {
+    return authEnabledProbeCache.value;
+  }
+
+  try {
+    const response = await axios.get<{ authEnabled?: boolean; enabled?: boolean }>(
+      `${API_URL}/auth/status`,
+      { withCredentials: true }
+    );
+    const enabled =
+      typeof response.data?.authEnabled === "boolean"
+        ? response.data.authEnabled
+        : typeof response.data?.enabled === "boolean"
+          ? response.data.enabled
+          : true;
+    cacheAuthEnabled(enabled);
+    return enabled;
+  } catch {
+    return readCachedAuthEnabled();
+  }
+};
+
+const redirectToLogin = async () => {
+  const authEnabled = await getAuthEnabledStatus();
+  if (authEnabled === false) return;
   if (window.location.pathname !== '/login') {
     window.location.href = '/login';
   }
@@ -87,9 +135,13 @@ const refreshAccessToken = async (): Promise<string> => {
         throw new Error("Missing refresh token");
       }
 
-      const refreshResponse = await axios.post(`${API_URL}/auth/refresh`, {
-        refreshToken,
-      });
+      const refreshResponse = await axios.post(
+        `${API_URL}/auth/refresh`,
+        {
+          refreshToken,
+        },
+        { withCredentials: true }
+      );
 
       const nextAccessToken = String(refreshResponse.data.accessToken || "");
       if (!nextAccessToken) {
@@ -173,6 +225,15 @@ api.interceptors.response.use(
       const url = String(originalRequest.url || "");
       const isAuthRoute = url.includes('/auth/');
       const hasRefreshToken = Boolean(localStorage.getItem(REFRESH_TOKEN_KEY));
+      const authEnabled = !isAuthRoute ? await getAuthEnabledStatus() : true;
+
+      if (!isAuthRoute && authEnabled === false) {
+        if (!originalRequest._authModeRetry) {
+          originalRequest._authModeRetry = true;
+          return api(originalRequest as any);
+        }
+        return Promise.reject(error);
+      }
 
       if (!isAuthRoute && hasRefreshToken && !originalRequest._retry) {
         try {
@@ -183,14 +244,14 @@ api.interceptors.response.use(
           return api(originalRequest as any);
         } catch {
           clearStoredAuth();
-          redirectToLogin();
+          await redirectToLogin();
           return Promise.reject(error);
         }
       }
 
       if (!isAuthRoute) {
         clearStoredAuth();
-        redirectToLogin();
+        await redirectToLogin();
       }
     }
 
@@ -243,14 +304,28 @@ const deserializeDrawingSummary = (drawing: unknown): DrawingSummary => {
   if (typeof drawing !== 'object' || drawing === null) {
     throw new Error('Invalid drawing data');
   }
-  return deserializeTimestamps(drawing as HasTimestamps & DrawingSummary);
+  const parsed = drawing as HasTimestamps & DrawingSummary;
+  return deserializeTimestamps({
+    ...parsed,
+    preview:
+      typeof parsed.preview === "string"
+        ? normalizePreviewSvg(parsed.preview)
+        : parsed.preview,
+  });
 };
 
 const deserializeDrawing = (drawing: unknown): Drawing => {
   if (typeof drawing !== 'object' || drawing === null) {
     throw new Error('Invalid drawing data');
   }
-  return deserializeTimestamps(drawing as HasTimestamps & Drawing);
+  const parsed = drawing as HasTimestamps & Drawing;
+  return deserializeTimestamps({
+    ...parsed,
+    preview:
+      typeof parsed.preview === "string"
+        ? normalizePreviewSvg(parsed.preview)
+        : parsed.preview,
+  });
 };
 
 export interface PaginatedDrawings<T> {

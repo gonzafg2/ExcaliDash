@@ -7,6 +7,7 @@ import { formatDistanceToNow } from 'date-fns';
 import clsx from 'clsx';
 // import { exportToSvg } from "@excalidraw/excalidraw"; // Lazy load this instead
 import { exportDrawingToFile } from '../utils/exportUtils';
+import { previewHasEmbeddedImages } from '../utils/previewSvg';
 
 import * as api from '../api';
 
@@ -15,6 +16,31 @@ type HydratedDrawingData = {
   appState: any;
   files: Record<string, any>;
 };
+
+const normalizeImageElementsForPreview = (
+  elements: any[] = [],
+  files: Record<string, any> = {}
+): any[] =>
+  elements.map((element) => {
+    if (!element || element.type !== "image" || typeof element.fileId !== "string") {
+      return element;
+    }
+
+    const file = files[element.fileId];
+    const hasImageData =
+      typeof file?.dataURL === "string" &&
+      file.dataURL.startsWith("data:image/") &&
+      file.dataURL.length > 0;
+
+    if (!hasImageData || element.status === "saved") {
+      return element;
+    }
+
+    return {
+      ...element,
+      status: "saved",
+    };
+  });
 
 interface DrawingCardProps {
   drawing: DrawingSummary;
@@ -60,6 +86,7 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [fullData, setFullData] = useState<HydratedDrawingData | null>(null);
+  const hasEmbeddedImages = previewHasEmbeddedImages(previewSvg);
 
   const fullDataRef = React.useRef(fullData);
   fullDataRef.current = fullData;
@@ -118,7 +145,7 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
         if (cancelled) return;
 
         const svg = await exportToSvg({
-          elements: data.elements,
+          elements: normalizeImageElementsForPreview(data.elements, data.files || {}),
           appState: {
             ...data.appState,
             exportBackground: true,
@@ -248,7 +275,10 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
 
           {previewSvg ? (
             <div
-              className="w-full h-full p-3 sm:p-4 lg:p-5 flex items-center justify-center [&>svg]:w-full [&>svg]:h-full [&>svg]:object-contain [&>svg]:drop-shadow-sm dark:[&>svg]:invert dark:[&>svg_rect[fill='white']]:opacity-0 dark:[&>svg_rect[fill='#ffffff']]:opacity-0 transition-transform duration-500 group-hover:scale-105"
+              className={clsx(
+                "w-full h-full p-3 sm:p-4 lg:p-5 flex items-center justify-center [&>svg]:w-auto [&>svg]:h-auto [&>svg]:max-w-full [&>svg]:max-h-full [&>svg]:drop-shadow-sm transition-transform duration-500",
+                !hasEmbeddedImages && "dark:[&>svg]:invert dark:[&>svg_rect[fill='white']]:opacity-0 dark:[&>svg_rect[fill='#ffffff']]:opacity-0"
+              )}
               dangerouslySetInnerHTML={{ __html: previewSvg }}
             />
           ) : (

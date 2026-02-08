@@ -231,7 +231,7 @@ export const importLegacyFiles = async (
           // Import each drawing entry
           for (let i = 0; i < drawings.length; i += 1) {
             const d = drawings[i] as LegacyExportDrawing;
-            const elements = Array.isArray(d.elements) ? d.elements : null;
+            const elements = Array.isArray(d.elements) ? (d.elements as any[]) : null;
             const appState =
               typeof d.appState === "object" && d.appState !== null
                 ? (d.appState as Record<string, unknown>)

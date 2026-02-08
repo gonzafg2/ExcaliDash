@@ -101,11 +101,45 @@ export const sanitizeHtml = (input: string): string => {
 export const sanitizeSvg = (svgContent: string): string => {
   if (typeof svgContent !== "string") return "";
 
-  return purify
+  const safeImageDataUrlPattern =
+    /^data:image\/(?:png|jpe?g|gif|webp|avif|bmp);base64,[a-z0-9+/=\s]+$/i;
+
+  const sanitizeSvgImageTags = (content: string): string =>
+    content.replace(/<image\b[^>]*>/gi, (imageTag) => {
+      const hrefMatch =
+        imageTag.match(/\shref\s*=\s*"([^"]*)"/i) ??
+        imageTag.match(/\shref\s*=\s*'([^']*)'/i) ??
+        imageTag.match(/\sxlink:href\s*=\s*"([^"]*)"/i) ??
+        imageTag.match(/\sxlink:href\s*=\s*'([^']*)'/i);
+
+      const hrefValue = hrefMatch?.[1]?.trim();
+      if (!hrefValue || !safeImageDataUrlPattern.test(hrefValue)) {
+        return "";
+      }
+
+      const withoutXlinkHref = imageTag.replace(
+        /\sxlink:href\s*=\s*(?:"[^"]*"|'[^']*')/gi,
+        ""
+      );
+
+      if (/\shref\s*=/i.test(withoutXlinkHref)) {
+        return withoutXlinkHref.replace(
+          /\shref\s*=\s*(?:"[^"]*"|'[^']*')/i,
+          ` href="${hrefValue}"`
+        );
+      }
+
+      return withoutXlinkHref.replace(/<image\b/i, `<image href="${hrefValue}"`);
+    });
+
+  const sanitized = purify
     .sanitize(svgContent, {
       ALLOWED_TAGS: [
         "svg",
+        "defs",
+        "pattern",
         "g",
+        "image",
         "rect",
         "circle",
         "ellipse",
@@ -117,6 +151,12 @@ export const sanitizeSvg = (svgContent: string): string => {
         "tspan",
       ],
       ALLOWED_ATTR: [
+        "xmlns",
+        "xmlns:xlink",
+        "version",
+        "id",
+        "viewBox",
+        "preserveAspectRatio",
         "x",
         "y",
         "width",
@@ -133,14 +173,29 @@ export const sanitizeSvg = (svgContent: string): string => {
         "points",
         "d",
         "fill",
+        "fill-opacity",
+        "fill-rule",
         "stroke",
         "stroke-width",
+        "stroke-opacity",
+        "stroke-linecap",
+        "stroke-linejoin",
+        "stroke-miterlimit",
+        "stroke-dasharray",
+        "stroke-dashoffset",
         "opacity",
         "transform",
+        "vector-effect",
+        "patternUnits",
+        "patternContentUnits",
         "font-size",
         "font-family",
+        "font-weight",
+        "letter-spacing",
         "text-anchor",
         "dominant-baseline",
+        "href",
+        "xlink:href",
       ],
       FORBID_TAGS: [
         "script",
@@ -149,10 +204,8 @@ export const sanitizeSvg = (svgContent: string): string => {
         "object",
         "embed",
         "use",
-        "image",
         "style",
         "link",
-        "defs",
         "symbol",
         "marker",
         "clipPath",
@@ -166,17 +219,16 @@ export const sanitizeSvg = (svgContent: string): string => {
         "onmouseover",
         "onfocus",
         "onblur",
-        "href",
-        "xlink:href",
         "src",
         "action",
         "style",
         "class",
-        "id",
       ],
       KEEP_CONTENT: true,
     })
     .trim();
+
+  return sanitizeSvgImageTags(sanitized).trim();
 };
 
 export const sanitizeText = (

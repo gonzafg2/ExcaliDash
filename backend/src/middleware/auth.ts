@@ -53,23 +53,10 @@ const getAuthEnabled = async (): Promise<boolean> => {
 };
 
 const getBootstrapActingUser = async () => {
-  const user = await prisma.user.findUnique({
+  return prisma.user.upsert({
     where: { id: BOOTSTRAP_USER_ID },
-    select: {
-      id: true,
-      username: true,
-      email: true,
-      name: true,
-      role: true,
-      mustResetPassword: true,
-      isActive: true,
-    },
-  });
-
-  if (user) return user;
-
-  return prisma.user.create({
-    data: {
+    update: {},
+    create: {
       id: BOOTSTRAP_USER_ID,
       email: "bootstrap@excalidash.local",
       username: null,

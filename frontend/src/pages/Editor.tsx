@@ -30,6 +30,13 @@ interface Peer extends UserIdentity {
   isActive: boolean;
 }
 
+class DrawingSaveConflictError extends Error {
+  constructor(message = "Drawing version conflict") {
+    super(message);
+    this.name = "DrawingSaveConflictError";
+  }
+}
+
 export const Editor: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -172,6 +179,39 @@ export const Editor: React.FC = () => {
       } as const;
     },
     [getRenderableBaselineSnapshot]
+  );
+
+  const normalizeImageElementStatus = useCallback(
+    (elements: readonly any[] = [], files?: Record<string, any> | null): readonly any[] => {
+      if (!Array.isArray(elements) || elements.length === 0) return elements;
+      const fileMap = files || {};
+      let changed = false;
+
+      const normalized = elements.map((element: any) => {
+        if (!element || element.type !== "image" || typeof element.fileId !== "string") {
+          return element;
+        }
+
+        const file = fileMap[element.fileId];
+        const hasImageData =
+          typeof file?.dataURL === "string" &&
+          file.dataURL.startsWith("data:image/") &&
+          file.dataURL.length > 0;
+
+        if (!hasImageData || element.status === "saved") {
+          return element;
+        }
+
+        changed = true;
+        return {
+          ...element,
+          status: "saved",
+        };
+      });
+
+      return changed ? normalized : elements;
+    },
+    []
   );
 
   const emitFilesDeltaIfNeeded = useCallback(
@@ -519,18 +559,23 @@ export const Editor: React.FC = () => {
         return;
       }
       const persistableFiles = files ?? latestFilesRef.current ?? {};
+      const normalizedElements = normalizeImageElementStatus(
+        persistableElements,
+        persistableFiles
+      );
+      const normalizedElementsForSave = Array.from(normalizedElements);
 
       console.log("[Editor] Saving drawing", {
         drawingId,
-        elementCount: persistableElements.length,
-        hasRenderableElements: hasRenderableElements(persistableElements),
+        elementCount: normalizedElementsForSave.length,
+        hasRenderableElements: hasRenderableElements(normalizedElementsForSave),
         appState: persistableAppState,
       });
 
       const persistScene = async (attempt: number): Promise<void> => {
         try {
           const updated = await api.updateDrawing(drawingId, {
-            elements: persistableElements,
+            elements: normalizedElementsForSave,
             appState: persistableAppState,
             files: persistableFiles,
             version: currentDrawingVersionRef.current ?? undefined,
@@ -538,7 +583,7 @@ export const Editor: React.FC = () => {
           if (typeof updated.version === "number") {
             currentDrawingVersionRef.current = updated.version;
           }
-          lastPersistedElementsRef.current = persistableElements;
+          lastPersistedElementsRef.current = normalizedElementsForSave;
           console.log("[Editor] Save complete", { drawingId });
         } catch (err) {
           if (api.isAxiosError(err) && err.response?.status === 409) {
@@ -557,9 +602,7 @@ export const Editor: React.FC = () => {
               return;
             }
 
-            console.warn("[Editor] Version conflict while saving drawing", { drawingId });
-            toast.error("Drawing changed in another tab. Refresh to load latest.");
-            return;
+            throw new DrawingSaveConflictError();
           }
 
           throw err;
@@ -568,17 +611,38 @@ export const Editor: React.FC = () => {
 
       await persistScene(0);
     } catch (err) {
+      if (err instanceof DrawingSaveConflictError) {
+        console.warn("[Editor] Version conflict while saving drawing", { drawingId });
+        toast.error("Drawing changed in another tab. Refresh to load latest.");
+        throw err;
+      }
       console.error('Failed to save drawing', err);
       toast.error("Failed to save changes");
+      throw err;
     }
   };
 
   const enqueueSceneSave = useCallback(
-    (drawingId: string, elements: readonly any[], appState: any, files?: Record<string, any>) => {
+    (
+      drawingId: string,
+      elements: readonly any[],
+      appState: any,
+      files?: Record<string, any>,
+      options?: { suppressErrors?: boolean }
+    ) => {
+      const suppressErrors = options?.suppressErrors ?? true;
       saveQueueRef.current = saveQueueRef.current
         .catch(() => undefined)
         .then(async () => {
           if (!saveDataRef.current) return;
+          if (suppressErrors) {
+            try {
+              await saveDataRef.current(drawingId, elements, appState, files);
+            } catch {
+              // Background autosaves already surface their own toast via saveDataRef.
+            }
+            return;
+          }
           await saveDataRef.current(drawingId, elements, appState, files);
         });
       return saveQueueRef.current;
@@ -590,7 +654,12 @@ export const Editor: React.FC = () => {
     if (!drawingId) return;
 
     try {
-      const candidateSnapshot = latestElementsRef.current ?? elements;
+      const snapshotFromArgs = Array.isArray(elements) ? elements : [];
+      const snapshotFromRef = latestElementsRef.current ?? [];
+      const candidateSnapshot =
+        hasRenderableElements(snapshotFromArgs) || !hasRenderableElements(snapshotFromRef)
+          ? snapshotFromArgs
+          : snapshotFromRef;
       const {
         snapshot: currentSnapshot,
         prevented: preventedPreviewOverwrite,
@@ -598,6 +667,7 @@ export const Editor: React.FC = () => {
         staleNonRenderableSnapshot: staleNonRenderablePreview,
       } = resolveSafeSnapshot(candidateSnapshot);
       const currentFiles = latestFilesRef.current ?? files;
+      const normalizedSnapshot = normalizeImageElementStatus(currentSnapshot, currentFiles);
       if (suspiciousBlankLoadRef.current && !hasRenderableElements(currentSnapshot)) {
         console.warn("[Editor] Blocking non-renderable preview due to suspicious blank load", {
           drawingId,
@@ -616,7 +686,7 @@ export const Editor: React.FC = () => {
       }
 
       const svg = await exportToSvg({
-        elements: currentSnapshot,
+        elements: normalizedSnapshot,
         appState: {
           ...appState,
           exportBackground: true,
@@ -628,7 +698,7 @@ export const Editor: React.FC = () => {
 
       console.log("[Editor] Saving preview", {
         drawingId,
-        elementCount: currentSnapshot.length,
+        elementCount: normalizedSnapshot.length,
       });
 
       await api.updateDrawing(drawingId, { preview });
@@ -1013,6 +1083,14 @@ export const Editor: React.FC = () => {
       if (didEmit && latestAppStateRef.current && debouncedSaveRef.current) {
         hasSceneChangesSinceLoadRef.current = true;
         debouncedSaveRef.current(id, latestElementsRef.current, latestAppStateRef.current, nextFiles);
+        if (savePreviewRef.current) {
+          void savePreviewRef.current(
+            id,
+            latestElementsRef.current,
+            latestAppStateRef.current,
+            nextFiles
+          );
+        }
       }
     }, 1000);
 
@@ -1044,18 +1122,21 @@ export const Editor: React.FC = () => {
     if (isSavingOnLeave) return; // Prevent double clicks
 
     setIsSavingOnLeave(true);
+    let shouldNavigate = false;
 
     // Save drawing and generate preview before navigating
     try {
-      if (excalidrawAPI.current && saveDataRef.current && savePreviewRef.current) {
-        if (!hasSceneChangesSinceLoadRef.current) {
-          console.log("[Editor] Skipping back-navigation save: no scene changes since load", {
-            drawingId: id,
-          });
-          navigate('/');
-          return;
-        }
-        if (!id) return;
+      if (!(excalidrawAPI.current && saveDataRef.current && savePreviewRef.current)) {
+        // If editor API is not ready, allow navigation instead of trapping the user.
+        shouldNavigate = true;
+      } else if (!hasSceneChangesSinceLoadRef.current) {
+        console.log("[Editor] Skipping back-navigation save: no scene changes since load", {
+          drawingId: id,
+        });
+        shouldNavigate = true;
+      } else if (!id) {
+        shouldNavigate = true;
+      } else {
         const elements = excalidrawAPI.current.getSceneElementsIncludingDeleted();
         const {
           snapshot: safeElements,
@@ -1081,22 +1162,25 @@ export const Editor: React.FC = () => {
             elementCount: safeElements.length,
           });
           toast.warning("Blank scene detected on load. Skipping save to protect existing data.");
-          navigate('/');
-          return;
+          shouldNavigate = true;
+        } else {
+          await Promise.all([
+            enqueueSceneSave(id, safeElements, appState, files, { suppressErrors: false }),
+            savePreviewRef.current(id, safeElements, appState, files)
+          ]);
+          console.log("[Editor] Saved on back navigation", { drawingId: id });
+          shouldNavigate = true;
         }
-
-        await Promise.all([
-          enqueueSceneSave(id, safeElements, appState, files),
-          savePreviewRef.current(id, safeElements, appState, files)
-        ]);
-        console.log("[Editor] Saved on back navigation", { drawingId: id });
       }
     } catch (err) {
       console.error('Failed to save on back navigation', err);
+      toast.error("Failed to save changes. Please retry before leaving.");
     } finally {
       setIsSavingOnLeave(false);
     }
-    navigate('/');
+    if (shouldNavigate) {
+      navigate('/');
+    }
   };
 
   return (

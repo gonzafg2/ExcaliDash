@@ -267,6 +267,90 @@ describe("Security Sanitization - Image Data URLs", () => {
     });
   });
 
+  describe("sanitizeDrawingData - preview svg handling", () => {
+    it("should preserve safe SVG layout attributes needed for thumbnail rendering", () => {
+      const preview = [
+        '<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 728.39453125 606.908203125" width="1456.7890625" height="1213.81640625" preserveAspectRatio="xMidYMid meet">',
+        '<rect x="0" y="0" width="728.39453125" height="606.908203125" fill="#ffffff"></rect>',
+        '<path d="M0 0 L20 20" stroke="#000" stroke-linecap="round"></path>',
+        "</svg>",
+      ].join("");
+
+      const result = sanitizeDrawingData({
+        elements: [],
+        appState: { viewBackgroundColor: "#ffffff" },
+        files: {},
+        preview,
+      });
+
+      expect(result.preview).toContain('viewBox="0 0 728.39453125 606.908203125"');
+      expect(result.preview).toContain('preserveAspectRatio="xMidYMid meet"');
+      expect(result.preview).toContain('stroke-linecap="round"');
+      expect(result.preview).toContain('xmlns="http://www.w3.org/2000/svg"');
+    });
+
+    it("should preserve safe embedded image previews", () => {
+      const preview = [
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">',
+        '<image x="0" y="0" width="40" height="40" href="data:image/png;base64,AAAA"></image>',
+        "</svg>",
+      ].join("");
+
+      const result = sanitizeDrawingData({
+        elements: [],
+        appState: { viewBackgroundColor: "#ffffff" },
+        files: {},
+        preview,
+      });
+
+      expect(result.preview).toContain("<image");
+      expect(result.preview).toContain('href="data:image/png;base64,AAAA"');
+    });
+
+    it("should remove embedded images with unsafe href values", () => {
+      const preview = [
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">',
+        '<image x="0" y="0" width="40" height="40" href="javascript:alert(1)"></image>',
+        '<rect x="0" y="0" width="10" height="10" fill="#000"></rect>',
+        "</svg>",
+      ].join("");
+
+      const result = sanitizeDrawingData({
+        elements: [],
+        appState: { viewBackgroundColor: "#ffffff" },
+        files: {},
+        preview,
+      });
+
+      expect(result.preview).not.toContain("<image");
+      expect(result.preview).toContain("<rect");
+    });
+
+    it("should preserve safe defs/pattern image structures used by Excalidraw exports", () => {
+      const preview = [
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">',
+        '<defs><pattern id="p1" width="1" height="1" patternUnits="objectBoundingBox">',
+        '<image href="data:image/png;base64,AAAA" width="100" height="100"></image>',
+        "</pattern></defs>",
+        '<rect x="0" y="0" width="100" height="100" fill="url(#p1)"></rect>',
+        "</svg>",
+      ].join("");
+
+      const result = sanitizeDrawingData({
+        elements: [],
+        appState: { viewBackgroundColor: "#ffffff" },
+        files: {},
+        preview,
+      });
+
+      expect(result.preview).toContain("<defs>");
+      expect(result.preview).toContain("<pattern");
+      expect(result.preview).toContain('id="p1"');
+      expect(result.preview).toContain("<image");
+      expect(result.preview).toContain('fill="url(#p1)"');
+    });
+  });
+
   describe("validateImportedDrawing - with files", () => {
     it("should validate drawing with embedded images", () => {
       const files = createSampleFilesObject(2, "large");
