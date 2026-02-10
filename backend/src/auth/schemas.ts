@@ -47,6 +47,10 @@ export const authEnabledToggleSchema = z.object({
   enabled: z.boolean(),
 });
 
+export const authOnboardingChoiceSchema = z.object({
+  enableAuth: z.boolean(),
+});
+
 export const adminCreateUserSchema = z.object({
   username: z.string().trim().min(3).max(50).optional(),
   email: z.string().email().toLowerCase().trim(),

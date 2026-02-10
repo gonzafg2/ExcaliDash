@@ -101,6 +101,8 @@ docker compose -f docker-compose.prod.yml up -d
 
 For single-container deployments, `JWT_SECRET` can be omitted and will be auto-generated and persisted in the backend volume on first start. For portability and all multi-instance deployments, set a fixed `JWT_SECRET` explicitly.
 
+By default, the provided Compose files set `TRUST_PROXY=false` for safer setup. Only set `TRUST_PROXY` to a positive hop count (for example, `1`) when requests always pass through a trusted reverse proxy that correctly sets forwarded headers.
+
 ## Docker Build
 
 [Install Docker](https://docs.docker.com/desktop/)
@@ -123,7 +125,7 @@ docker compose up -d
 When running ExcaliDash behind Traefik, Nginx, or another reverse proxy, configure both containers so that API + WebSocket calls resolve correctly:
 
 - `FRONTEND_URL` (backend) must match the public URL that users hit (e.g. `https://excalidash.example.com`). This controls CORS and Socket.IO origin checks. **Supports multiple comma-separated URLs** for accessing from different addresses.
-- `TRUST_PROXY` (backend) should be set to `1` when requests pass through one reverse proxy hop (for example: frontend nginx -> backend). This ensures rate limiting and logging use the real client IP from trusted proxy headers.
+- `TRUST_PROXY` (backend) should be set to `1` when requests pass through one trusted reverse proxy hop (for example: frontend nginx -> backend) and forwarded headers are sanitized. This ensures rate limiting and logging use the real client IP from trusted proxy headers.
 - `BACKEND_URL` (frontend) tells the Nginx container how to reach the backend from inside Docker/Kubernetes. Override it if your reverse proxy exposes the backend under a different hostname.
 
 ```yaml
@@ -202,6 +204,27 @@ npx prisma db push
 
 npm run dev
 ```
+
+### Simulate Auth Onboarding (Development)
+
+To simulate first-run authentication choice flows in local development:
+
+```bash
+cd ExcaliDash/backend
+
+# Preview what would change (no data modifications)
+npm run dev:simulate-auth-onboarding:dry-run
+
+# Simulate "fresh install" onboarding state
+# (wipes drawings/collections/libraries and removes non-bootstrap users)
+npm run dev:simulate-auth-onboarding:fresh
+
+# Simulate "migration" onboarding state (ensures legacy data exists)
+npm run dev:simulate-auth-onboarding:migration
+```
+
+After running a simulation while the backend is already running, wait about 5 seconds
+(auth mode cache TTL) or restart the backend before refreshing the UI.
 
 ## Project Structure
 

@@ -1,16 +1,15 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../api';
 import type { Collection } from '../types';
-import { Shield, UserPlus, RefreshCw, UserCog, LogIn, XCircle, Settings as SettingsIcon, KeyRound } from 'lucide-react';
+import { Shield, UserPlus, RefreshCw, UserCog, LogIn, Settings as SettingsIcon, KeyRound } from 'lucide-react';
 import {
   IMPERSONATION_KEY,
   type ImpersonationState,
   readImpersonationState,
-  stopImpersonation as restoreImpersonation,
   USER_KEY,
 } from '../utils/impersonation';
 
@@ -57,11 +56,6 @@ export const Admin: React.FC = () => {
   const [loginRateLimitMax, setLoginRateLimitMax] = useState(20);
   const [resetIdentifier, setResetIdentifier] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
-
-  const impersonation = useMemo(() => {
-    if (!authEnabled) return null;
-    return readImpersonationState();
-  }, [authEnabled]);
 
   useEffect(() => {
     if (authEnabled === false) {
@@ -331,28 +325,6 @@ export const Admin: React.FC = () => {
     }
   };
 
-  const stopImpersonation = async () => {
-    if (!readImpersonationState()) return;
-
-    try {
-      const response = await api.api.post<{
-        user?: { id: string; email: string; name: string };
-      }>('/auth/stop-impersonation');
-
-      restoreImpersonation();
-      if (response.data?.user) {
-        localStorage.setItem(USER_KEY, JSON.stringify(response.data.user));
-      }
-      window.location.href = '/admin';
-    } catch (err: unknown) {
-      let message = 'Failed to stop impersonation';
-      if (api.isAxiosError(err)) {
-        message = err.response?.data?.message || err.response?.data?.error || message;
-      }
-      setError(message);
-    }
-  };
-
   if (authEnabled === null) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -398,27 +370,6 @@ export const Admin: React.FC = () => {
           </button>
         </div>
       </div>
-
-      {impersonation && (
-        <div className="mb-6 p-4 bg-amber-50 dark:bg-amber-900/20 border-2 border-amber-200 dark:border-amber-800 rounded-xl flex items-start justify-between gap-4">
-          <div>
-            <div className="font-bold text-amber-900 dark:text-amber-200 flex items-center gap-2">
-              <LogIn size={16} />
-              Impersonating {impersonation.target.email}
-            </div>
-            <div className="text-sm text-amber-800 dark:text-amber-200/80 font-medium mt-1">
-              Stop impersonation to return to {impersonation.impersonator.email}.
-            </div>
-          </div>
-          <button
-            onClick={stopImpersonation}
-            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-bold rounded-xl border-2 border-amber-300 dark:border-amber-700 bg-white dark:bg-neutral-900 text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-all"
-          >
-            <XCircle size={16} />
-            Stop
-          </button>
-        </div>
-      )}
 
       {success && (
         <div className="mb-6 p-4 bg-green-50 dark:bg-green-900/20 border-2 border-green-200 dark:border-green-800 rounded-xl">

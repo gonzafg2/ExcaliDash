@@ -12,7 +12,16 @@ export const Login: React.FC = () => {
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login, logout, authEnabled, bootstrapRequired, isAuthenticated, loading: authLoading, user } = useAuth();
+  const {
+    login,
+    logout,
+    authEnabled,
+    bootstrapRequired,
+    authOnboardingRequired,
+    isAuthenticated,
+    loading: authLoading,
+    user,
+  } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const queryMustReset = searchParams.get('mustReset') === '1';
@@ -20,6 +29,10 @@ export const Login: React.FC = () => {
 
   useEffect(() => {
     if (authLoading || authEnabled === null) return;
+    if (authOnboardingRequired) {
+      navigate('/auth-setup', { replace: true });
+      return;
+    }
     if (!authEnabled) {
       navigate('/', { replace: true });
       return;
@@ -32,7 +45,7 @@ export const Login: React.FC = () => {
       if (mustReset) return;
       navigate('/', { replace: true });
     }
-  }, [authEnabled, authLoading, bootstrapRequired, isAuthenticated, mustReset, navigate]);
+  }, [authEnabled, authLoading, authOnboardingRequired, bootstrapRequired, isAuthenticated, mustReset, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

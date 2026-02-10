@@ -34,6 +34,7 @@ export const Settings: React.FC = () => {
         isOpen: false,
         nextEnabled: null,
     });
+    const [authDisableFinalConfirmOpen, setAuthDisableFinalConfirmOpen] = useState(false);
 
     const [backupExportExt, setBackupExportExt] = useState<'excalidash' | 'excalidash.zip'>('excalidash');
     const [backupImportConfirmation, setBackupImportConfirmation] = useState<{
@@ -512,18 +513,54 @@ export const Settings: React.FC = () => {
                 message={
                     authToggleConfirm.nextEnabled
                         ? 'This will require users to sign in. You will be prompted to set up an admin account immediately.'
-                        : 'This will turn off multi-user authentication. Anyone with access to this instance can use the dashboard.'
+                        : (
+                            <div className="space-y-2 text-left">
+                                <div>
+                                    This will turn off authentication for the entire instance.
+                                </div>
+                                <div className="font-semibold text-rose-700 dark:text-rose-300">
+                                    Recommendation: keep authentication enabled unless this instance is fully private.
+                                </div>
+                            </div>
+                        )
                 }
-                confirmText={authToggleConfirm.nextEnabled ? 'Enable' : 'Disable'}
+                confirmText={authToggleConfirm.nextEnabled ? 'Enable' : 'Continue'}
                 cancelText="Cancel"
                 isDangerous={!authToggleConfirm.nextEnabled}
                 onConfirm={async () => {
                     const nextEnabled = authToggleConfirm.nextEnabled;
                     setAuthToggleConfirm({ isOpen: false, nextEnabled: null });
                     if (typeof nextEnabled !== 'boolean') return;
+                    if (!nextEnabled) {
+                        setAuthDisableFinalConfirmOpen(true);
+                        return;
+                    }
                     await setAuthEnabled(nextEnabled);
                 }}
                 onCancel={() => setAuthToggleConfirm({ isOpen: false, nextEnabled: null })}
+            />
+
+            <ConfirmModal
+                isOpen={authDisableFinalConfirmOpen}
+                title="Final warning: disable authentication?"
+                message={
+                    <div className="space-y-2 text-left">
+                        <div>
+                            With authentication off, any user who can access this URL can view and modify all drawings and settings. They can also turn authentication back on and lock you out.
+                        </div>
+                        <div className="font-semibold text-rose-700 dark:text-rose-300">
+                            This is only safe on a trusted private network.
+                        </div>
+                    </div>
+                }
+                confirmText="Disable Authentication"
+                cancelText="Keep Enabled (Recommended)"
+                isDangerous
+                onConfirm={async () => {
+                    setAuthDisableFinalConfirmOpen(false);
+                    await setAuthEnabled(false);
+                }}
+                onCancel={() => setAuthDisableFinalConfirmOpen(false)}
             />
 
             <ConfirmModal

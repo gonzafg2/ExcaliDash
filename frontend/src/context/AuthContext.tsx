@@ -25,6 +25,8 @@ interface AuthContextType {
   loading: boolean;
   authEnabled: boolean | null;
   bootstrapRequired: boolean;
+  authOnboardingRequired: boolean;
+  authOnboardingMode: 'migration' | 'fresh' | null;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, name: string) => Promise<void>;
   logout: () => void;
@@ -41,6 +43,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [loading, setLoading] = useState(true);
   const [authEnabled, setAuthEnabled] = useState<boolean | null>(null);
   const [bootstrapRequired, setBootstrapRequired] = useState(false);
+  const [authOnboardingRequired, setAuthOnboardingRequired] = useState(false);
+  const [authOnboardingMode, setAuthOnboardingMode] = useState<'migration' | 'fresh' | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -57,6 +61,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           setAuthEnabled(enabled);
           localStorage.setItem(AUTH_ENABLED_CACHE_KEY, String(enabled));
           setBootstrapRequired(Boolean(statusResponse?.bootstrapRequired));
+          setAuthOnboardingRequired(Boolean(statusResponse?.authOnboardingRequired));
+          setAuthOnboardingMode(
+            statusResponse?.authOnboardingMode === 'migration' || statusResponse?.authOnboardingMode === 'fresh'
+              ? statusResponse.authOnboardingMode
+              : null
+          );
 
           if (!enabled) {
             localStorage.removeItem(USER_KEY);
@@ -68,12 +78,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           if (cachedAuthEnabled === "false") {
             setAuthEnabled(false);
             setBootstrapRequired(false);
+            setAuthOnboardingRequired(false);
+            setAuthOnboardingMode(null);
             localStorage.removeItem(USER_KEY);
             setUser(null);
             return;
           }
           setAuthEnabled(true);
           setBootstrapRequired(false);
+          setAuthOnboardingRequired(false);
+          setAuthOnboardingMode(null);
         }
 
         const storedUser = localStorage.getItem(USER_KEY);
@@ -179,6 +193,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         loading,
         authEnabled,
         bootstrapRequired,
+        authOnboardingRequired,
+        authOnboardingMode,
         login,
         register,
         logout,

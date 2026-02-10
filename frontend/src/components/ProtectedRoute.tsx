@@ -8,7 +8,14 @@ interface ProtectedRouteProps {
 
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   const location = useLocation();
-  const { isAuthenticated, loading, authEnabled, bootstrapRequired, user } = useAuth();
+  const {
+    isAuthenticated,
+    loading,
+    authEnabled,
+    bootstrapRequired,
+    authOnboardingRequired,
+    user,
+  } = useAuth();
 
   if (loading || authEnabled === null) {
     return (
@@ -16,6 +23,10 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
         <div className="text-gray-600 dark:text-gray-400">Loading...</div>
       </div>
     );
+  }
+
+  if (authOnboardingRequired && location.pathname !== '/auth-setup') {
+    return <Navigate to="/auth-setup" replace />;
   }
 
   // Single-user mode: auth disabled -> allow access.

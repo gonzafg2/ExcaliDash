@@ -70,6 +70,9 @@ export interface AuthStatusResponse {
   authEnabled?: boolean;
   enabled?: boolean;
   bootstrapRequired?: boolean;
+  authOnboardingRequired?: boolean;
+  authOnboardingMode?: "migration" | "fresh";
+  authOnboardingRecommended?: "enable" | null;
 }
 
 export interface AuthUser {
@@ -132,11 +135,21 @@ export const authRegister = async (
   password: string,
   name: string
 ): Promise<{ user: AuthUser; accessToken: string; refreshToken: string }> => {
-  const response = await axios.post<{ user: AuthUser; accessToken: string; refreshToken: string }>(
-    `${API_URL}/auth/register`,
-    { email, password, name },
-    { withCredentials: true }
+  const response = await api.post<{ user: AuthUser; accessToken: string; refreshToken: string }>(
+    "/auth/register",
+    { email, password, name }
   );
+  return response.data;
+};
+
+export const authOnboardingChoice = async (
+  enableAuth: boolean
+): Promise<{ authEnabled: boolean; authOnboardingCompleted: boolean; bootstrapRequired: boolean }> => {
+  const response = await api.post<{
+    authEnabled: boolean;
+    authOnboardingCompleted: boolean;
+    bootstrapRequired: boolean;
+  }>('/auth/onboarding-choice', { enableAuth });
   return response.data;
 };
 
@@ -225,7 +238,6 @@ api.interceptors.request.use(
     // Auth endpoints that don't require authentication (login, register, etc.)
     const publicAuthEndpoints = [
       '/auth/login',
-      '/auth/register',
       '/auth/refresh',
       '/auth/password-reset-request',
       '/auth/password-reset-confirm',

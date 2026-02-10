@@ -31,6 +31,7 @@ export const createAuthModeService = (
       create: {
         id: DEFAULT_SYSTEM_CONFIG_ID,
         authEnabled: false,
+        authOnboardingCompleted: false,
         registrationEnabled: false,
         authLoginRateLimitEnabled: true,
         authLoginRateLimitWindowMs: 15 * 60 * 1000,

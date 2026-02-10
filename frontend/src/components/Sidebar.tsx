@@ -6,7 +6,6 @@ import clsx from 'clsx';
 import { ConfirmModal } from './ConfirmModal';
 import { Logo } from './Logo';
 import { useAuth } from '../context/AuthContext';
-import { readImpersonationState, stopImpersonation as restoreImpersonation, type ImpersonationState } from '../utils/impersonation';
 import { getInitialsFromName } from '../utils/user';
 
 interface SidebarProps {
@@ -124,7 +123,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const navigate = useNavigate();
   const { logout, user, authEnabled } = useAuth();
   const isAdmin = user?.role === 'ADMIN';
-  const [impersonation, setImpersonation] = useState<ImpersonationState | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -138,18 +136,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
   }, []);
-
-  useEffect(() => {
-    if (!authEnabled) {
-      setImpersonation(null);
-      return;
-    }
-    const sync = () => setImpersonation(readImpersonationState());
-    sync();
-    window.addEventListener('storage', sync);
-    return () => window.removeEventListener('storage', sync);
-  }, [authEnabled]);
-
 
   const handleCreateSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -345,32 +331,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {/* User info and logout */}
           {authEnabled && (
             <div className="mt-auto pt-4 border-t-2 border-slate-200 dark:border-neutral-700">
-            {impersonation && (
-              <div className="px-3 pb-2">
-                <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border-2 border-amber-200 dark:border-amber-800 rounded-xl flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-[11px] font-bold text-amber-900 dark:text-amber-200 uppercase tracking-wide">
-                      Impersonating
-                    </div>
-                    <div className="text-xs font-semibold text-amber-900 dark:text-amber-200 truncate">
-                      {user?.email}
-                    </div>
-                    <div className="text-[11px] text-amber-800/80 dark:text-amber-200/70 truncate">
-                      Return to {impersonation.impersonator.email}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => {
-                      if (!restoreImpersonation()) return;
-                      window.location.reload();
-                    }}
-                    className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border-2 border-amber-300 dark:border-amber-700 bg-white dark:bg-neutral-900 text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-all flex-shrink-0"
-                  >
-                    Stop
-                  </button>
-                </div>
-              </div>
-            )}
             {user && (
               <div className="py-2 text-xs text-slate-500 dark:text-neutral-500 mb-2">
                 <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3">

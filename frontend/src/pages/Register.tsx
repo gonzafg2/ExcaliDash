@@ -9,11 +9,22 @@ export const Register: React.FC = () => {
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { register, authEnabled, bootstrapRequired, isAuthenticated, loading: authLoading } = useAuth();
+  const {
+    register,
+    authEnabled,
+    bootstrapRequired,
+    authOnboardingRequired,
+    isAuthenticated,
+    loading: authLoading,
+  } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
     if (authLoading || authEnabled === null) return;
+    if (authOnboardingRequired) {
+      navigate('/auth-setup', { replace: true });
+      return;
+    }
     if (!authEnabled) {
       navigate('/', { replace: true });
       return;
@@ -21,7 +32,7 @@ export const Register: React.FC = () => {
     if (isAuthenticated) {
       navigate('/', { replace: true });
     }
-  }, [authEnabled, authLoading, isAuthenticated, navigate]);
+  }, [authEnabled, authLoading, authOnboardingRequired, isAuthenticated, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

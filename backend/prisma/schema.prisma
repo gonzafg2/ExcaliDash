@@ -33,6 +33,7 @@ model User {
 model SystemConfig {
   id                         String   @id @default("default")
   authEnabled                Boolean  @default(false)
+  authOnboardingCompleted    Boolean  @default(false)
   registrationEnabled        Boolean  @default(false)
   authLoginRateLimitEnabled  Boolean  @default(true)
   authLoginRateLimitWindowMs Int      @default(900000) // 15 minutes

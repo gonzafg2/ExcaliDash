@@ -8,7 +8,8 @@ services:
       - DATABASE_URL=file:/app/prisma/dev.db
       - PORT=8000
       - NODE_ENV=production
-      - TRUST_PROXY=1
+      # Keep disabled by default; only enable when a trusted proxy sanitizes forwarded headers.
+      - TRUST_PROXY=false
       # Optional for single-instance deployments:
       # if unset, backend auto-generates and persists one in the volume.
       # Recommended to set explicitly for portability and multi-instance setups.

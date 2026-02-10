@@ -1,10 +1,11 @@
 import express, { Request, Response } from "express";
 import bcrypt from "bcrypt";
 import jwt, { SignOptions } from "jsonwebtoken";
-import { PrismaClient } from "../generated/client";
+import { Prisma, PrismaClient } from "../generated/client";
 import { StringValue } from "ms";
 import { logAuditEvent } from "../utils/audit";
 import {
+  authOnboardingChoiceSchema,
   authEnabledToggleSchema,
   loginSchema,
   registerSchema,
@@ -21,6 +22,7 @@ type RegisterCoreRoutesDeps = {
   ensureSystemConfig: () => Promise<{
     id: string;
     authEnabled: boolean;
+    authOnboardingCompleted: boolean;
     registrationEnabled: boolean;
   }>;
   findUserByIdentifier: (identifier: string) => Promise<{
@@ -102,10 +104,54 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
     readRefreshTokenFromRequest,
   } = deps;
   const getUserTrashCollectionId = (userId: string): string => `trash:${userId}`;
+  const getAuthOnboardingStatus = async (systemConfig: {
+    authEnabled: boolean;
+    authOnboardingCompleted: boolean;
+  }) => {
+    const [activeUsers, drawingsCount, collectionsCount] = await Promise.all([
+      prisma.user.count({ where: { isActive: true } }),
+      prisma.drawing.count(),
+      prisma.collection.count(),
+    ]);
+    const hasLegacyData = drawingsCount > 0 || collectionsCount > 0;
+    const needsChoice =
+      !systemConfig.authEnabled &&
+      activeUsers === 0 &&
+      !systemConfig.authOnboardingCompleted;
+
+    return {
+      activeUsers,
+      hasLegacyData,
+      needsChoice,
+      mode: hasLegacyData ? "migration" : "fresh",
+    } as const;
+  };
+
+  const ensureBootstrapUserExists = async (): Promise<void> => {
+    const bootstrap = await prisma.user.findUnique({
+      where: { id: bootstrapUserId },
+      select: { id: true },
+    });
+    if (bootstrap) return;
+
+    await prisma.user.create({
+      data: {
+        id: bootstrapUserId,
+        email: "bootstrap@excalidash.local",
+        username: null,
+        passwordHash: "",
+        name: "Bootstrap Admin",
+        role: "ADMIN",
+        mustResetPassword: true,
+        isActive: false,
+      },
+    });
+  };
 
   router.post("/register", loginAttemptRateLimiter, async (req: Request, res: Response) => {
     try {
       if (!(await ensureAuthEnabled(res))) return;
+      if (!requireCsrf(req, res)) return;
       const parsed = registerSchema.safeParse(req.body);
 
       if (!parsed.success) {
@@ -135,25 +181,66 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
         const passwordHash = await bcrypt.hash(password, saltRounds);
         const sanitizedName = sanitizeText(name, 100);
 
-        const user = await prisma.user.update({
-          where: { id: bootstrapUserId },
-          data: {
-            email,
-            username: username ?? null,
-            passwordHash,
-            name: sanitizedName,
-            role: "ADMIN",
-            mustResetPassword: false,
-            isActive: true,
-          },
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            role: true,
-            mustResetPassword: true,
-          },
+        const existingEmailUser = await prisma.user.findUnique({
+          where: { email },
+          select: { id: true },
         });
+        if (existingEmailUser && existingEmailUser.id !== bootstrapUserId) {
+          return res.status(409).json({
+            error: "Conflict",
+            message: "User with this email already exists",
+          });
+        }
+
+        if (username) {
+          const existingUsernameUser = await prisma.user.findFirst({
+            where: { username },
+            select: { id: true },
+          });
+          if (existingUsernameUser && existingUsernameUser.id !== bootstrapUserId) {
+            return res.status(409).json({
+              error: "Conflict",
+              message: "User with this username already exists",
+            });
+          }
+        }
+
+        let user: {
+          id: string;
+          email: string;
+          name: string;
+          role: string;
+          mustResetPassword: boolean;
+        };
+        try {
+          user = await prisma.user.update({
+            where: { id: bootstrapUserId },
+            data: {
+              email,
+              username: username ?? null,
+              passwordHash,
+              name: sanitizedName,
+              role: "ADMIN",
+              mustResetPassword: false,
+              isActive: true,
+            },
+            select: {
+              id: true,
+              email: true,
+              name: true,
+              role: true,
+              mustResetPassword: true,
+            },
+          });
+        } catch (error) {
+          if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+            return res.status(409).json({
+              error: "Conflict",
+              message: "User with this email or username already exists",
+            });
+          }
+          throw error;
+        }
 
         const trashCollectionId = getUserTrashCollectionId(user.id);
         const existingTrash = await prisma.collection.findFirst({
@@ -747,6 +834,7 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
   router.get("/status", optionalAuth, async (req: Request, res: Response) => {
     try {
       const systemConfig = await ensureSystemConfig();
+      const onboarding = await getAuthOnboardingStatus(systemConfig);
       if (!systemConfig.authEnabled) {
         return res.json({
           enabled: false,
@@ -754,6 +842,9 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
           authEnabled: false,
           registrationEnabled: false,
           bootstrapRequired: false,
+          authOnboardingRequired: onboarding.needsChoice,
+          authOnboardingMode: onboarding.mode,
+          authOnboardingRecommended: onboarding.needsChoice ? "enable" : null,
           user: null,
         });
       }
@@ -762,8 +853,9 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
         where: { id: bootstrapUserId },
         select: { id: true, isActive: true },
       });
-      const activeUsers = await prisma.user.count({ where: { isActive: true } });
-      const bootstrapRequired = Boolean(bootstrapUser && bootstrapUser.isActive === false) && activeUsers === 0;
+      const bootstrapRequired =
+        Boolean(bootstrapUser && bootstrapUser.isActive === false) &&
+        onboarding.activeUsers === 0;
 
       res.json({
         enabled: true,
@@ -771,6 +863,9 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
         authenticated: Boolean(req.user),
         registrationEnabled: systemConfig.registrationEnabled,
         bootstrapRequired,
+        authOnboardingRequired: onboarding.needsChoice,
+        authOnboardingMode: onboarding.mode,
+        authOnboardingRecommended: onboarding.needsChoice ? "enable" : null,
         user: req.user
           ? {
               id: req.user.id,
@@ -788,6 +883,61 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
       res.status(500).json({
         error: "Internal server error",
         message: "Failed to fetch auth status",
+      });
+    }
+  });
+
+  router.post("/onboarding-choice", optionalAuth, async (req: Request, res: Response) => {
+    try {
+      if (!requireCsrf(req, res)) return;
+      const parsed = authOnboardingChoiceSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: "Bad request",
+          message: "Invalid onboarding choice payload",
+        });
+      }
+
+      const systemConfig = await ensureSystemConfig();
+      const onboarding = await getAuthOnboardingStatus(systemConfig);
+      if (!onboarding.needsChoice) {
+        return res.status(409).json({
+          error: "Conflict",
+          message: "Authentication onboarding is already completed",
+        });
+      }
+
+      const nextAuthEnabled = parsed.data.enableAuth;
+      if (nextAuthEnabled) {
+        await ensureBootstrapUserExists();
+      }
+
+      const updated = await prisma.systemConfig.upsert({
+        where: { id: defaultSystemConfigId },
+        update: {
+          authEnabled: nextAuthEnabled,
+          authOnboardingCompleted: true,
+        },
+        create: {
+          id: defaultSystemConfigId,
+          authEnabled: nextAuthEnabled,
+          authOnboardingCompleted: true,
+          registrationEnabled: systemConfig.registrationEnabled,
+        },
+      });
+
+      clearAuthEnabledCache();
+
+      return res.json({
+        authEnabled: updated.authEnabled,
+        authOnboardingCompleted: updated.authOnboardingCompleted,
+        bootstrapRequired: Boolean(nextAuthEnabled),
+      });
+    } catch (error) {
+      console.error("Auth onboarding choice error:", error);
+      return res.status(500).json({
+        error: "Internal server error",
+        message: "Failed to apply authentication onboarding choice",
       });
     }
   });
@@ -840,10 +990,11 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
 
       const updated = await prisma.systemConfig.upsert({
         where: { id: defaultSystemConfigId },
-        update: { authEnabled: next },
+        update: { authEnabled: next, authOnboardingCompleted: true },
         create: {
           id: defaultSystemConfigId,
           authEnabled: next,
+          authOnboardingCompleted: true,
           registrationEnabled: systemConfig.registrationEnabled,
         },
       });

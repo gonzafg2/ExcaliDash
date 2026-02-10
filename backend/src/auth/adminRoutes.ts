@@ -96,6 +96,48 @@ export const registerAdminRoutes = (deps: RegisterAdminRoutesDeps) => {
     requireCsrf,
   } = deps;
 
+  const resolveImpersonationAdmin = async (req: Request, res: Response) => {
+    if (!req.user) {
+      res.status(401).json({ error: "Unauthorized", message: "User not authenticated" });
+      return null;
+    }
+
+    if (req.user.role === "ADMIN") {
+      return {
+        id: req.user.id,
+        email: req.user.email,
+        name: req.user.name,
+      };
+    }
+
+    if (!req.user.impersonatorId) {
+      res.status(403).json({ error: "Forbidden", message: "Admin access required" });
+      return null;
+    }
+
+    const impersonator = await prisma.user.findUnique({
+      where: { id: req.user.impersonatorId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        isActive: true,
+      },
+    });
+
+    if (!impersonator || !impersonator.isActive || impersonator.role !== "ADMIN") {
+      res.status(403).json({ error: "Forbidden", message: "Admin access required" });
+      return null;
+    }
+
+    return {
+      id: impersonator.id,
+      email: impersonator.email,
+      name: impersonator.name,
+    };
+  };
+
   router.post("/registration/toggle", requireAuth, async (req: Request, res: Response) => {
     try {
       if (!(await ensureAuthEnabled(res))) return;
@@ -206,6 +248,42 @@ export const registerAdminRoutes = (deps: RegisterAdminRoutesDeps) => {
       res.status(500).json({
         error: "Internal server error",
         message: "Failed to list users",
+      });
+    }
+  });
+
+  router.get("/impersonation-targets", requireAuth, async (req: Request, res: Response) => {
+    try {
+      if (!(await ensureAuthEnabled(res))) return;
+      const actingAdmin = await resolveImpersonationAdmin(req, res);
+      if (!actingAdmin) return;
+
+      const users = await prisma.user.findMany({
+        where: { isActive: true, id: { not: actingAdmin.id } },
+        orderBy: [{ name: "asc" }, { email: "asc" }],
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          name: true,
+          role: true,
+          isActive: true,
+        },
+      });
+
+      res.json({
+        users,
+        impersonator: {
+          id: actingAdmin.id,
+          email: actingAdmin.email,
+          name: actingAdmin.name,
+        },
+      });
+    } catch (error) {
+      console.error("List impersonation targets error:", error);
+      res.status(500).json({
+        error: "Internal server error",
+        message: "Failed to list impersonation targets",
       });
     }
   });
@@ -599,7 +677,8 @@ export const registerAdminRoutes = (deps: RegisterAdminRoutesDeps) => {
     try {
       if (!(await ensureAuthEnabled(res))) return;
       if (!requireCsrf(req, res)) return;
-      if (!requireAdmin(req, res)) return;
+      const actingAdmin = await resolveImpersonationAdmin(req, res);
+      if (!actingAdmin) return;
 
       const parsed = impersonateSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -615,12 +694,19 @@ export const registerAdminRoutes = (deps: RegisterAdminRoutesDeps) => {
         return res.status(404).json({ error: "Not found", message: "User not found" });
       }
 
+      if (target.id === actingAdmin.id) {
+        return res.status(409).json({
+          error: "Conflict",
+          message: "Already using the admin account. Use stop impersonation to return.",
+        });
+      }
+
       if (!target.isActive) {
         return res.status(403).json({ error: "Forbidden", message: "Target user is inactive" });
       }
 
       const { accessToken, refreshToken } = generateTokens(target.id, target.email, {
-        impersonatorId: req.user.id,
+        impersonatorId: actingAdmin.id,
       });
       setAuthCookies(req, res, { accessToken, refreshToken });
 
@@ -639,12 +725,12 @@ export const registerAdminRoutes = (deps: RegisterAdminRoutesDeps) => {
 
       if (config.enableAuditLogging) {
         await logAuditEvent({
-          userId: req.user.id,
+          userId: actingAdmin.id,
           action: "impersonation_started",
           resource: `user:${target.id}`,
           ipAddress: req.ip || req.connection.remoteAddress || undefined,
           userAgent: req.headers["user-agent"] || undefined,
-          details: { targetUserId: target.id },
+          details: { targetUserId: target.id, initiatedFromImpersonation: Boolean(req.user?.impersonatorId) },
         });
       }
 

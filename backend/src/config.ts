@@ -128,8 +128,7 @@ if (config.nodeEnv === "production") {
     throw new Error("JWT_SECRET must be at least 32 characters long in production");
   }
   if (
-    insecureJwtSecretPlaceholders.has(normalizedSecret) ||
-    normalizedSecret.toLowerCase().includes("change-this-secret")
+    insecureJwtSecretPlaceholders.has(normalizedSecret)
   ) {
     throw new Error("JWT_SECRET must be changed from placeholder/default value in production");
   }
