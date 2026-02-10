@@ -118,11 +118,20 @@ export const config: Config = {
 
 // Validate JWT_SECRET strength in production
 if (config.nodeEnv === "production") {
+  const normalizedSecret = config.jwtSecret.trim();
+  const insecureJwtSecretPlaceholders = new Set([
+    "your-secret-key-change-in-production",
+    "change-this-secret-in-production-min-32-chars",
+  ]);
+
   if (config.jwtSecret.length < 32) {
     throw new Error("JWT_SECRET must be at least 32 characters long in production");
   }
-  if (config.jwtSecret === "your-secret-key-change-in-production") {
-    throw new Error("JWT_SECRET must be changed from default value in production");
+  if (
+    insecureJwtSecretPlaceholders.has(normalizedSecret) ||
+    normalizedSecret.toLowerCase().includes("change-this-secret")
+  ) {
+    throw new Error("JWT_SECRET must be changed from placeholder/default value in production");
   }
 }
 

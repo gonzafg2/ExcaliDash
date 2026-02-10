@@ -3,7 +3,7 @@ import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Logo } from '../components/Logo';
 import * as api from '../api';
-import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY, USER_KEY } from '../utils/impersonation';
+import { USER_KEY } from '../utils/impersonation';
 
 export const Login: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -81,8 +81,6 @@ export const Login: React.FC = () => {
         refreshToken: string;
       }>('/auth/must-reset-password', { newPassword });
 
-      localStorage.setItem(ACCESS_TOKEN_KEY, response.data.accessToken);
-      localStorage.setItem(REFRESH_TOKEN_KEY, response.data.refreshToken);
       localStorage.setItem(USER_KEY, JSON.stringify(response.data.user));
 
       window.location.href = '/';

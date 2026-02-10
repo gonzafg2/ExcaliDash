@@ -4,6 +4,7 @@ import { config } from "../config";
 import { PrismaClient } from "../generated/client";
 import { prisma as defaultPrisma } from "../db/prisma";
 import { createAuthModeService, type AuthModeService } from "../auth/authMode";
+import { ACCESS_TOKEN_COOKIE_NAME, readCookie } from "../auth/cookies";
 
 // Extend Express Request type to include user
 declare global {
@@ -46,14 +47,14 @@ const isJwtPayload = (decoded: unknown): decoded is JwtPayload => {
 
 const extractToken = (req: Request): string | null => {
   const authHeader = req.headers.authorization;
-  if (!authHeader || typeof authHeader !== "string") return null;
-
-  const parts = authHeader.split(" ");
-  if (parts.length !== 2 || parts[0] !== "Bearer") {
-    return null;
+  if (authHeader && typeof authHeader === "string") {
+    const parts = authHeader.split(" ");
+    if (parts.length === 2 && parts[0] === "Bearer") {
+      return parts[1] || null;
+    }
   }
 
-  return parts[1];
+  return readCookie(req, ACCESS_TOKEN_COOKIE_NAME);
 };
 
 const verifyToken = (token: string): JwtPayload | null => {

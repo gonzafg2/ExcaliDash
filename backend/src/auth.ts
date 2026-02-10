@@ -21,6 +21,13 @@ import {
   type AuthModeService,
 } from "./auth/authMode";
 import { getCsrfValidationClientIds } from "./security/csrfClient";
+import {
+  clearAuthCookies,
+  readCookie,
+  REFRESH_TOKEN_COOKIE_NAME,
+  setAccessTokenCookie,
+  setAuthCookies,
+} from "./auth/cookies";
 
 interface JwtPayload {
   userId: string;
@@ -380,6 +387,10 @@ export const createAuthRouter = (deps: CreateAuthRouterDeps): express.Router => 
     bootstrapUserId: BOOTSTRAP_USER_ID,
     defaultSystemConfigId: DEFAULT_SYSTEM_CONFIG_ID,
     clearAuthEnabledCache: authModeService.clearAuthEnabledCache,
+    setAuthCookies,
+    setAccessTokenCookie,
+    clearAuthCookies,
+    readRefreshTokenFromRequest: (req) => readCookie(req, REFRESH_TOKEN_COOKIE_NAME),
   });
 
   registerAdminRoutes({
@@ -401,6 +412,8 @@ export const createAuthRouter = (deps: CreateAuthRouterDeps): express.Router => 
     getRefreshTokenExpiresAt,
     config,
     defaultSystemConfigId: DEFAULT_SYSTEM_CONFIG_ID,
+    setAuthCookies,
+    requireCsrf,
   });
 
   registerAccountRoutes({
@@ -414,6 +427,8 @@ export const createAuthRouter = (deps: CreateAuthRouterDeps): express.Router => 
     config,
     generateTokens,
     getRefreshTokenExpiresAt,
+    setAuthCookies,
+    requireCsrf,
   });
 
   return router;

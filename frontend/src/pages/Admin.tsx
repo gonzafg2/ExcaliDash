@@ -7,11 +7,9 @@ import * as api from '../api';
 import type { Collection } from '../types';
 import { Shield, UserPlus, RefreshCw, UserCog, LogIn, XCircle, Settings as SettingsIcon, KeyRound } from 'lucide-react';
 import {
-  ACCESS_TOKEN_KEY,
   IMPERSONATION_KEY,
   type ImpersonationState,
   readImpersonationState,
-  REFRESH_TOKEN_KEY,
   stopImpersonation as restoreImpersonation,
   USER_KEY,
 } from '../utils/impersonation';
@@ -290,11 +288,9 @@ export const Admin: React.FC = () => {
       return;
     }
 
-    const originalAccessToken = localStorage.getItem(ACCESS_TOKEN_KEY);
-    const originalRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
     const originalUser = localStorage.getItem(USER_KEY);
-    if (!originalAccessToken || !originalRefreshToken || !originalUser) {
-      setError('Missing current session tokens.');
+    if (!originalUser) {
+      setError('Missing current session user state.');
       return;
     }
 
@@ -307,8 +303,6 @@ export const Admin: React.FC = () => {
 
       const state: ImpersonationState = {
         original: {
-          accessToken: originalAccessToken,
-          refreshToken: originalRefreshToken,
           user: JSON.parse(originalUser),
         },
         impersonator: {
@@ -325,8 +319,6 @@ export const Admin: React.FC = () => {
       };
 
       localStorage.setItem(IMPERSONATION_KEY, JSON.stringify(state));
-      localStorage.setItem(ACCESS_TOKEN_KEY, response.data.accessToken);
-      localStorage.setItem(REFRESH_TOKEN_KEY, response.data.refreshToken);
       localStorage.setItem(USER_KEY, JSON.stringify(response.data.user));
 
       window.location.href = '/';
@@ -339,9 +331,26 @@ export const Admin: React.FC = () => {
     }
   };
 
-  const stopImpersonation = () => {
-    if (!restoreImpersonation()) return;
-    window.location.href = '/admin';
+  const stopImpersonation = async () => {
+    if (!readImpersonationState()) return;
+
+    try {
+      const response = await api.api.post<{
+        user?: { id: string; email: string; name: string };
+      }>('/auth/stop-impersonation');
+
+      restoreImpersonation();
+      if (response.data?.user) {
+        localStorage.setItem(USER_KEY, JSON.stringify(response.data.user));
+      }
+      window.location.href = '/admin';
+    } catch (err: unknown) {
+      let message = 'Failed to stop impersonation';
+      if (api.isAxiosError(err)) {
+        message = err.response?.data?.message || err.response?.data?.error || message;
+      }
+      setError(message);
+    }
   };
 
   if (authEnabled === null) {

@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import * as api from '../api';
 import type { Collection } from '../types';
 import { User, Lock, Save, X, Shield } from 'lucide-react';
-import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY, USER_KEY } from '../utils/impersonation';
+import { USER_KEY } from '../utils/impersonation';
 
 export const Profile: React.FC = () => {
     const { user: authUser, logout, authEnabled } = useAuth();
@@ -234,8 +234,6 @@ export const Profile: React.FC = () => {
                 currentPassword: emailCurrentPassword,
             });
 
-            localStorage.setItem(ACCESS_TOKEN_KEY, response.data.accessToken);
-            localStorage.setItem(REFRESH_TOKEN_KEY, response.data.refreshToken);
             localStorage.setItem(USER_KEY, JSON.stringify(response.data.user));
 
             setSuccess('Email updated successfully');

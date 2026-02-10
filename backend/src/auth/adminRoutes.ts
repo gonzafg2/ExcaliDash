@@ -64,6 +64,12 @@ type RegisterAdminRoutesDeps = {
     enableRefreshTokenRotation: boolean;
   };
   defaultSystemConfigId: string;
+  setAuthCookies: (
+    req: Request,
+    res: Response,
+    tokens: { accessToken: string; refreshToken: string }
+  ) => void;
+  requireCsrf: (req: Request, res: Response) => boolean;
 };
 
 export const registerAdminRoutes = (deps: RegisterAdminRoutesDeps) => {
@@ -86,11 +92,14 @@ export const registerAdminRoutes = (deps: RegisterAdminRoutesDeps) => {
     getRefreshTokenExpiresAt,
     config,
     defaultSystemConfigId,
+    setAuthCookies,
+    requireCsrf,
   } = deps;
 
   router.post("/registration/toggle", requireAuth, async (req: Request, res: Response) => {
     try {
       if (!(await ensureAuthEnabled(res))) return;
+      if (!requireCsrf(req, res)) return;
       if (!requireAdmin(req, res)) return;
 
       const parsed = registrationToggleSchema.safeParse(req.body);
@@ -117,6 +126,7 @@ export const registerAdminRoutes = (deps: RegisterAdminRoutesDeps) => {
   router.post("/admins", requireAuth, async (req: Request, res: Response) => {
     try {
       if (!(await ensureAuthEnabled(res))) return;
+      if (!requireCsrf(req, res)) return;
       if (!requireAdmin(req, res)) return;
 
       const parsed = adminRoleUpdateSchema.safeParse(req.body);
@@ -220,6 +230,7 @@ export const registerAdminRoutes = (deps: RegisterAdminRoutesDeps) => {
   router.put("/rate-limit/login", requireAuth, async (req: Request, res: Response) => {
     try {
       if (!(await ensureAuthEnabled(res))) return;
+      if (!requireCsrf(req, res)) return;
       if (!requireAdmin(req, res)) return;
 
       const parsed = loginRateLimitUpdateSchema.safeParse(req.body);
@@ -265,6 +276,7 @@ export const registerAdminRoutes = (deps: RegisterAdminRoutesDeps) => {
   router.post("/rate-limit/login/reset", requireAuth, async (req: Request, res: Response) => {
     try {
       if (!(await ensureAuthEnabled(res))) return;
+      if (!requireCsrf(req, res)) return;
       if (!requireAdmin(req, res)) return;
 
       const parsed = loginRateLimitResetSchema.safeParse(req.body);
@@ -302,6 +314,7 @@ export const registerAdminRoutes = (deps: RegisterAdminRoutesDeps) => {
   router.post("/users", requireAuth, accountActionRateLimiter, async (req: Request, res: Response) => {
     try {
       if (!(await ensureAuthEnabled(res))) return;
+      if (!requireCsrf(req, res)) return;
       if (!requireAdmin(req, res)) return;
 
       const parsed = adminCreateUserSchema.safeParse(req.body);
@@ -386,6 +399,7 @@ export const registerAdminRoutes = (deps: RegisterAdminRoutesDeps) => {
   router.patch("/users/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       if (!(await ensureAuthEnabled(res))) return;
+      if (!requireCsrf(req, res)) return;
       if (!requireAdmin(req, res)) return;
 
       const userId = String(req.params.id || "").trim();
@@ -494,6 +508,7 @@ export const registerAdminRoutes = (deps: RegisterAdminRoutesDeps) => {
   router.post("/users/:id/reset-password", requireAuth, accountActionRateLimiter, async (req: Request, res: Response) => {
     try {
       if (!(await ensureAuthEnabled(res))) return;
+      if (!requireCsrf(req, res)) return;
       if (!requireAdmin(req, res)) return;
 
       if (req.user.impersonatorId) {
@@ -583,6 +598,7 @@ export const registerAdminRoutes = (deps: RegisterAdminRoutesDeps) => {
   router.post("/impersonate", requireAuth, accountActionRateLimiter, async (req: Request, res: Response) => {
     try {
       if (!(await ensureAuthEnabled(res))) return;
+      if (!requireCsrf(req, res)) return;
       if (!requireAdmin(req, res)) return;
 
       const parsed = impersonateSchema.safeParse(req.body);
@@ -606,6 +622,7 @@ export const registerAdminRoutes = (deps: RegisterAdminRoutesDeps) => {
       const { accessToken, refreshToken } = generateTokens(target.id, target.email, {
         impersonatorId: req.user.id,
       });
+      setAuthCookies(req, res, { accessToken, refreshToken });
 
       if (config.enableRefreshTokenRotation) {
         const expiresAt = getRefreshTokenExpiresAt();

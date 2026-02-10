@@ -5,6 +5,7 @@ import {
   authStatus,
   authMe,
   authRefresh,
+  authLogout,
   authLogin,
   authRegister,
   isAxiosError,
@@ -32,8 +33,6 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const TOKEN_KEY = 'excalidash-access-token';
-const REFRESH_TOKEN_KEY = 'excalidash-refresh-token';
 const USER_KEY = 'excalidash-user';
 const AUTH_ENABLED_CACHE_KEY = "excalidash-auth-enabled";
 
@@ -60,8 +59,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           setBootstrapRequired(Boolean(statusResponse?.bootstrapRequired));
 
           if (!enabled) {
-            localStorage.removeItem(TOKEN_KEY);
-            localStorage.removeItem(REFRESH_TOKEN_KEY);
             localStorage.removeItem(USER_KEY);
             setUser(null);
             return;
@@ -71,8 +68,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           if (cachedAuthEnabled === "false") {
             setAuthEnabled(false);
             setBootstrapRequired(false);
-            localStorage.removeItem(TOKEN_KEY);
-            localStorage.removeItem(REFRESH_TOKEN_KEY);
             localStorage.removeItem(USER_KEY);
             setUser(null);
             return;
@@ -82,44 +77,28 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
 
         const storedUser = localStorage.getItem(USER_KEY);
-        const storedToken = localStorage.getItem(TOKEN_KEY);
-
-        if (storedUser && storedToken) {
+        if (storedUser) {
           const userData = JSON.parse(storedUser);
           setUser(userData);
+        }
 
+        try {
+          const response = await authMe();
+          setUser(response.user);
+          localStorage.setItem(USER_KEY, JSON.stringify(response.user));
+        } catch {
           try {
-            const response = await authMe(storedToken);
-            setUser(response.user);
+            await authRefresh();
+            const userResponse = await authMe();
+            setUser(userResponse.user);
+            localStorage.setItem(USER_KEY, JSON.stringify(userResponse.user));
           } catch {
-            const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
-            if (refreshToken) {
-              try {
-                const refreshResponse = await authRefresh(refreshToken);
-                localStorage.setItem(TOKEN_KEY, refreshResponse.accessToken);
-                if (refreshResponse.refreshToken) {
-                  localStorage.setItem(REFRESH_TOKEN_KEY, refreshResponse.refreshToken);
-                }
-                const userResponse = await authMe(refreshResponse.accessToken);
-                setUser(userResponse.user);
-              } catch {
-                localStorage.removeItem(TOKEN_KEY);
-                localStorage.removeItem(REFRESH_TOKEN_KEY);
-                localStorage.removeItem(USER_KEY);
-                setUser(null);
-              }
-            } else {
-              localStorage.removeItem(TOKEN_KEY);
-              localStorage.removeItem(REFRESH_TOKEN_KEY);
-              localStorage.removeItem(USER_KEY);
-              setUser(null);
-            }
+            localStorage.removeItem(USER_KEY);
+            setUser(null);
           }
         }
       } catch (error) {
         console.error('Failed to load user:', error);
-        localStorage.removeItem(TOKEN_KEY);
-        localStorage.removeItem(REFRESH_TOKEN_KEY);
         localStorage.removeItem(USER_KEY);
         setUser(null);
       } finally {
@@ -137,10 +116,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
       const response = await authLogin(email, password);
 
-      const { user: userData, accessToken, refreshToken } = response;
+      const { user: userData } = response;
 
-      localStorage.setItem(TOKEN_KEY, accessToken);
-      localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
       localStorage.setItem(USER_KEY, JSON.stringify(userData));
 
       setUser(userData);
@@ -166,10 +143,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
       const response = await authRegister(email, password, name);
 
-      const { user: userData, accessToken, refreshToken } = response;
+      const { user: userData } = response;
 
-      localStorage.setItem(TOKEN_KEY, accessToken);
-      localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
       localStorage.setItem(USER_KEY, JSON.stringify(userData));
 
       setUser(userData);
@@ -189,8 +164,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const logout = () => {
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(REFRESH_TOKEN_KEY);
+    void authLogout().catch(() => undefined);
     localStorage.removeItem(USER_KEY);
     setUser(null);
     setTimeout(() => {

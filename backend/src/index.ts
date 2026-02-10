@@ -109,15 +109,19 @@ const initializeUploadDir = async () => {
 
 const app = express();
 
-// Trust proxy headers (X-Forwarded-For, X-Real-IP) from nginx.
-// Default to a single trusted proxy hop unless TRUST_PROXY is explicitly configured.
-// Set TRUST_PROXY=true only when you fully trust all upstream proxy hops.
-const trustProxyConfig = (process.env.TRUST_PROXY ?? "1").trim();
-const trustProxyValue = trustProxyConfig === "true"
-  ? true
-  : trustProxyConfig === "false"
-  ? false
-  : Number.parseInt(trustProxyConfig, 10) || 1;
+// Trust proxy headers (X-Forwarded-For, X-Real-IP) only when explicitly configured.
+// Safe default is disabled to avoid spoofed client IPs when running without a trusted proxy.
+// Set TRUST_PROXY=1 (or a specific hop count) when deploying behind reverse proxies.
+const trustProxyConfig = (process.env.TRUST_PROXY ?? "false").trim();
+const parsedProxyHops = Number.parseInt(trustProxyConfig, 10);
+const trustProxyValue =
+  trustProxyConfig === "true"
+    ? true
+    : trustProxyConfig === "false"
+    ? false
+    : Number.isFinite(parsedProxyHops) && parsedProxyHops > 0
+    ? parsedProxyHops
+    : false;
 app.set("trust proxy", trustProxyValue);
 
 if (trustProxyValue === true) {

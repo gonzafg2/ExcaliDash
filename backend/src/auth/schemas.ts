@@ -1,9 +1,25 @@
 import { z } from "zod";
 
+const productionStrongPasswordMessage =
+  "Password must be at least 12 characters and include upper, lower, number, and symbol";
+
+const strongPasswordPattern =
+  /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{12,100}$/;
+
+const passwordSchema = z
+  .string()
+  .min(8)
+  .max(100)
+  .refine(
+    (value) =>
+      process.env.NODE_ENV !== "production" || strongPasswordPattern.test(value),
+    { message: productionStrongPasswordMessage }
+  );
+
 export const registerSchema = z.object({
   username: z.string().trim().min(3).max(50).optional(),
   email: z.string().email().toLowerCase().trim(),
-  password: z.string().min(8).max(100),
+  password: passwordSchema,
   name: z.string().trim().min(1).max(100),
 });
 
@@ -34,7 +50,7 @@ export const authEnabledToggleSchema = z.object({
 export const adminCreateUserSchema = z.object({
   username: z.string().trim().min(3).max(50).optional(),
   email: z.string().email().toLowerCase().trim(),
-  password: z.string().min(8).max(100),
+  password: passwordSchema,
   name: z.string().trim().min(1).max(100),
   role: z.enum(["ADMIN", "USER"]).optional(),
   mustResetPassword: z.boolean().optional(),
@@ -74,7 +90,7 @@ export const passwordResetRequestSchema = z.object({
 
 export const passwordResetConfirmSchema = z.object({
   token: z.string().min(1),
-  password: z.string().min(8).max(100),
+  password: passwordSchema,
 });
 
 export const updateProfileSchema = z.object({
@@ -88,9 +104,9 @@ export const updateEmailSchema = z.object({
 
 export const changePasswordSchema = z.object({
   currentPassword: z.string(),
-  newPassword: z.string().min(8).max(100),
+  newPassword: passwordSchema,
 });
 
 export const mustResetPasswordSchema = z.object({
-  newPassword: z.string().min(8).max(100),
+  newPassword: passwordSchema,
 });

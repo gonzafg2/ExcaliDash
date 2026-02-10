@@ -57,6 +57,14 @@ type RegisterCoreRoutesDeps = {
   bootstrapUserId: string;
   defaultSystemConfigId: string;
   clearAuthEnabledCache: () => void;
+  setAuthCookies: (
+    req: Request,
+    res: Response,
+    tokens: { accessToken: string; refreshToken: string }
+  ) => void;
+  setAccessTokenCookie: (req: Request, res: Response, accessToken: string) => void;
+  clearAuthCookies: (req: Request, res: Response) => void;
+  readRefreshTokenFromRequest: (req: Request) => string | null;
 };
 
 class HttpError extends Error {
@@ -88,6 +96,10 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
     bootstrapUserId,
     defaultSystemConfigId,
     clearAuthEnabledCache,
+    setAuthCookies,
+    setAccessTokenCookie,
+    clearAuthCookies,
+    readRefreshTokenFromRequest,
   } = deps;
   const getUserTrashCollectionId = (userId: string): string => `trash:${userId}`;
 
@@ -158,6 +170,7 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
         }
 
         const { accessToken, refreshToken } = generateTokens(user.id, user.email);
+        setAuthCookies(req, res, { accessToken, refreshToken });
 
         if (config.enableRefreshTokenRotation) {
           const expiresAt = getRefreshTokenExpiresAt();
@@ -257,6 +270,7 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
       }
 
       const { accessToken, refreshToken } = generateTokens(user.id, user.email);
+      setAuthCookies(req, res, { accessToken, refreshToken });
 
       if (config.enableRefreshTokenRotation) {
         const expiresAt = getRefreshTokenExpiresAt();
@@ -375,6 +389,7 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
       }
 
       const { accessToken, refreshToken } = generateTokens(user.id, user.email);
+      setAuthCookies(req, res, { accessToken, refreshToken });
 
       if (config.enableRefreshTokenRotation) {
         const expiresAt = getRefreshTokenExpiresAt();
@@ -431,7 +446,9 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
   router.post("/refresh", async (req: Request, res: Response) => {
     try {
       if (!(await ensureAuthEnabled(res))) return;
-      const { refreshToken: oldRefreshToken } = req.body;
+      const oldRefreshTokenFromBody =
+        typeof req.body?.refreshToken === "string" ? req.body.refreshToken : null;
+      const oldRefreshToken = oldRefreshTokenFromBody || readRefreshTokenFromRequest(req);
 
       if (!oldRefreshToken || typeof oldRefreshToken !== "string") {
         return res.status(400).json({
@@ -513,6 +530,10 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
               });
             });
 
+            setAuthCookies(req, res, {
+              accessToken,
+              refreshToken: newRefreshToken,
+            });
             return res.json({
               accessToken,
               refreshToken: newRefreshToken,
@@ -555,6 +576,7 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
           signOptions
         );
 
+        setAccessTokenCookie(req, res, accessToken);
         res.json({ accessToken });
       } catch {
         return res.status(401).json({
@@ -567,6 +589,116 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
       res.status(500).json({
         error: "Internal server error",
         message: "Failed to refresh token",
+      });
+    }
+  });
+
+  router.post("/logout", optionalAuth, async (req: Request, res: Response) => {
+    try {
+      if (!(await ensureAuthEnabled(res))) return;
+      if (!requireCsrf(req, res)) return;
+
+      clearAuthCookies(req, res);
+
+      if (config.enableRefreshTokenRotation && req.user?.id) {
+        await prisma.refreshToken.updateMany({
+          where: { userId: req.user.id, revoked: false },
+          data: { revoked: true },
+        });
+      }
+
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error("Logout error:", error);
+      return res.status(500).json({
+        error: "Internal server error",
+        message: "Failed to logout",
+      });
+    }
+  });
+
+  router.post("/stop-impersonation", requireAuth, async (req: Request, res: Response) => {
+    try {
+      if (!(await ensureAuthEnabled(res))) return;
+      if (!requireCsrf(req, res)) return;
+      if (!req.user) {
+        return res.status(401).json({
+          error: "Unauthorized",
+          message: "User not authenticated",
+        });
+      }
+
+      if (!req.user.impersonatorId) {
+        return res.status(409).json({
+          error: "Conflict",
+          message: "Not currently impersonating another user",
+        });
+      }
+
+      const impersonator = await prisma.user.findUnique({
+        where: { id: req.user.impersonatorId },
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          name: true,
+          role: true,
+          mustResetPassword: true,
+          isActive: true,
+        },
+      });
+
+      if (!impersonator || !impersonator.isActive || impersonator.role !== "ADMIN") {
+        return res.status(403).json({
+          error: "Forbidden",
+          message: "Impersonator account is unavailable or no longer authorized",
+        });
+      }
+
+      const { accessToken, refreshToken } = generateTokens(
+        impersonator.id,
+        impersonator.email
+      );
+      setAuthCookies(req, res, { accessToken, refreshToken });
+
+      if (config.enableRefreshTokenRotation) {
+        const expiresAt = getRefreshTokenExpiresAt();
+        try {
+          await prisma.refreshToken.create({
+            data: {
+              userId: impersonator.id,
+              token: hashTokenForStorage(refreshToken),
+              expiresAt,
+            },
+          });
+        } catch (error) {
+          if (isMissingRefreshTokenTableError(error)) {
+            return res.status(503).json({
+              error: "Service unavailable",
+              message: "Refresh token storage is unavailable. Please run database migrations.",
+            });
+          }
+          throw error;
+        }
+      }
+
+      return res.json({
+        user: {
+          id: impersonator.id,
+          username: impersonator.username,
+          email: impersonator.email,
+          name: impersonator.name,
+          role: impersonator.role,
+          mustResetPassword: impersonator.mustResetPassword,
+        },
+        accessToken,
+        refreshToken,
+      });
+    } catch (error) {
+      console.error("Stop impersonation error:", error);
+      return res.status(500).json({
+        error: "Internal server error",
+        message: "Failed to stop impersonation",
       });
     }
   });
