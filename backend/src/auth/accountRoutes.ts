@@ -34,6 +34,12 @@ type RegisterAccountRoutesDeps = {
     options?: { impersonatorId?: string }
   ) => { accessToken: string; refreshToken: string };
   getRefreshTokenExpiresAt: () => Date;
+  setAuthCookies: (
+    req: Request,
+    res: Response,
+    tokens: { accessToken: string; refreshToken: string }
+  ) => void;
+  requireCsrf: (req: Request, res: Response) => boolean;
 };
 
 export const registerAccountRoutes = (deps: RegisterAccountRoutesDeps) => {
@@ -48,6 +54,8 @@ export const registerAccountRoutes = (deps: RegisterAccountRoutesDeps) => {
     config,
     generateTokens,
     getRefreshTokenExpiresAt,
+    setAuthCookies,
+    requireCsrf,
   } = deps;
 
   router.post("/password-reset-request", loginAttemptRateLimiter, async (req: Request, res: Response) => {
@@ -210,6 +218,7 @@ export const registerAccountRoutes = (deps: RegisterAccountRoutesDeps) => {
   router.put("/profile", requireAuth, async (req: Request, res: Response) => {
     try {
       if (!(await ensureAuthEnabled(res))) return;
+      if (!requireCsrf(req, res)) return;
       if (!req.user) {
         return res.status(401).json({
           error: "Unauthorized",
@@ -261,6 +270,7 @@ export const registerAccountRoutes = (deps: RegisterAccountRoutesDeps) => {
   router.put("/email", requireAuth, accountActionRateLimiter, async (req: Request, res: Response) => {
     try {
       if (!(await ensureAuthEnabled(res))) return;
+      if (!requireCsrf(req, res)) return;
       if (!req.user) {
         return res.status(401).json({ error: "Unauthorized", message: "User not authenticated" });
       }
@@ -347,6 +357,7 @@ export const registerAccountRoutes = (deps: RegisterAccountRoutesDeps) => {
       }
 
       const { accessToken, refreshToken } = generateTokens(updatedUser.id, updatedUser.email);
+      setAuthCookies(req, res, { accessToken, refreshToken });
       if (config.enableRefreshTokenRotation) {
         const expiresAt = getRefreshTokenExpiresAt();
         try {
@@ -387,6 +398,7 @@ export const registerAccountRoutes = (deps: RegisterAccountRoutesDeps) => {
   router.post("/change-password", requireAuth, accountActionRateLimiter, async (req: Request, res: Response) => {
     try {
       if (!(await ensureAuthEnabled(res))) return;
+      if (!requireCsrf(req, res)) return;
       if (!req.user) {
         return res.status(401).json({ error: "Unauthorized", message: "User not authenticated" });
       }
@@ -463,6 +475,7 @@ export const registerAccountRoutes = (deps: RegisterAccountRoutesDeps) => {
   router.post("/must-reset-password", requireAuth, accountActionRateLimiter, async (req: Request, res: Response) => {
     try {
       if (!(await ensureAuthEnabled(res))) return;
+      if (!requireCsrf(req, res)) return;
       if (!req.user) {
         return res.status(401).json({ error: "Unauthorized", message: "User not authenticated" });
       }
@@ -528,6 +541,7 @@ export const registerAccountRoutes = (deps: RegisterAccountRoutesDeps) => {
       }
 
       const { accessToken, refreshToken } = generateTokens(updatedUser.id, updatedUser.email);
+      setAuthCookies(req, res, { accessToken, refreshToken });
       if (config.enableRefreshTokenRotation) {
         const expiresAt = getRefreshTokenExpiresAt();
         try {

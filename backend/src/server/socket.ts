@@ -2,6 +2,7 @@ import jwt from "jsonwebtoken";
 import { Server } from "socket.io";
 import { PrismaClient } from "../generated/client";
 import { AuthModeService } from "../auth/authMode";
+import { ACCESS_TOKEN_COOKIE_NAME, parseCookieHeader } from "../auth/cookies";
 
 interface User {
   id: string;
@@ -87,7 +88,13 @@ export const registerSocketHandlers = ({
 
   io.use(async (socket, next) => {
     try {
-      const token = socket.handshake.auth?.token as string | undefined;
+      const tokenFromAuth = socket.handshake.auth?.token as string | undefined;
+      const tokenFromCookie = (() => {
+        const cookies = parseCookieHeader(socket.handshake.headers.cookie);
+        const value = cookies[ACCESS_TOKEN_COOKIE_NAME];
+        return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+      })();
+      const token = tokenFromAuth || tokenFromCookie;
       const userId = await getSocketAuthUserId(token);
 
       if (!userId) {

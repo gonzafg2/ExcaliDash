@@ -16,9 +16,7 @@ export const isAxiosError = axios.isAxiosError;
 // Export api instance for direct use
 export { api as default };
 
-// JWT Token Management
-const TOKEN_KEY = 'excalidash-access-token';
-const REFRESH_TOKEN_KEY = 'excalidash-refresh-token';
+// Auth state persisted in local storage should remain non-sensitive.
 const USER_KEY = 'excalidash-user';
 const AUTH_ENABLED_CACHE_KEY = "excalidash-auth-enabled";
 const AUTH_STATUS_TTL_MS = 5000;
@@ -32,11 +30,6 @@ type RetriableRequestConfig = {
 };
 
 let authEnabledProbeCache: { value: boolean; fetchedAt: number } | null = null;
-
-const getAuthToken = (): string | null => {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(TOKEN_KEY);
-};
 
 // CSRF Token Management
 let csrfToken: string | null = null;
@@ -96,23 +89,30 @@ export const authStatus = async (): Promise<AuthStatusResponse> => {
   return response.data;
 };
 
-export const authMe = async (accessToken: string): Promise<{ user: AuthUser }> => {
+export const authMe = async (): Promise<{ user: AuthUser }> => {
   const response = await axios.get<{ user: AuthUser }>(`${API_URL}/auth/me`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
     withCredentials: true,
   });
   return response.data;
 };
 
 export const authRefresh = async (
-  refreshToken: string
+  refreshToken?: string
 ): Promise<{ accessToken: string; refreshToken?: string }> => {
+  const body =
+    typeof refreshToken === "string" && refreshToken.trim().length > 0
+      ? { refreshToken }
+      : {};
   const response = await axios.post<{ accessToken: string; refreshToken?: string }>(
     `${API_URL}/auth/refresh`,
-    { refreshToken },
+    body,
     { withCredentials: true }
   );
   return response.data;
+};
+
+export const authLogout = async (): Promise<void> => {
+  await api.post("/auth/logout");
 };
 
 export const authLogin = async (
@@ -152,8 +152,6 @@ export const authPasswordResetConfirm = async (
 };
 
 const clearStoredAuth = () => {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
 };
 
@@ -205,21 +203,11 @@ let refreshPromise: Promise<string> | null = null;
 const refreshAccessToken = async (): Promise<string> => {
   if (!refreshPromise) {
     refreshPromise = (async () => {
-      const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
-      if (!refreshToken) {
-        throw new Error("Missing refresh token");
-      }
-
-      const refreshResponse = await authRefresh(refreshToken);
+      const refreshResponse = await authRefresh();
 
       const nextAccessToken = String(refreshResponse.accessToken || "");
       if (!nextAccessToken) {
         throw new Error("Missing access token in refresh response");
-      }
-
-      localStorage.setItem(TOKEN_KEY, nextAccessToken);
-      if (refreshResponse.refreshToken) {
-        localStorage.setItem(REFRESH_TOKEN_KEY, refreshResponse.refreshToken);
       }
 
       return nextAccessToken;
@@ -244,14 +232,6 @@ api.interceptors.request.use(
     ];
 
     const isPublicAuthEndpoint = config.url && publicAuthEndpoints.some(endpoint => config.url?.startsWith(endpoint));
-
-    // Add JWT token to all requests except public auth endpoints
-    if (!isPublicAuthEndpoint) {
-      const token = getAuthToken();
-      if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
-      }
-    }
 
     // Only add CSRF token for state-changing methods (except public auth endpoints)
     const method = config.method?.toUpperCase();
@@ -293,7 +273,6 @@ api.interceptors.response.use(
       const originalRequest = (error.config || {}) as RetriableRequestConfig;
       const url = String(originalRequest.url || "");
       const isAuthRoute = url.includes('/auth/');
-      const hasRefreshToken = Boolean(localStorage.getItem(REFRESH_TOKEN_KEY));
       const authEnabled = !isAuthRoute ? await getAuthEnabledStatus() : true;
 
       if (!isAuthRoute && authEnabled === false) {
@@ -304,12 +283,10 @@ api.interceptors.response.use(
         return Promise.reject(error);
       }
 
-      if (!isAuthRoute && hasRefreshToken && !originalRequest._retry) {
+      if (!isAuthRoute && !originalRequest._retry) {
         try {
           originalRequest._retry = true;
-          const nextAccessToken = await refreshAccessToken();
-          originalRequest.headers = originalRequest.headers || {};
-          originalRequest.headers.Authorization = `Bearer ${nextAccessToken}`;
+          await refreshAccessToken();
           return api(originalRequest as any);
         } catch {
           clearStoredAuth();

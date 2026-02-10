@@ -34,7 +34,7 @@ describe("AuthProvider", () => {
       },
     });
 
-    vi.spyOn(axios, "get").mockRejectedValueOnce(new Error("network down"));
+    vi.spyOn(axios, "get").mockRejectedValue(new Error("network down"));
 
     render(
       <MemoryRouter>
@@ -52,8 +52,6 @@ describe("AuthProvider", () => {
 
   it("clears stored auth state when backend reports auth disabled", async () => {
     const storage = new Map<string, string>([
-      ["excalidash-access-token", "token"],
-      ["excalidash-refresh-token", "refresh"],
       ["excalidash-user", JSON.stringify({ id: "u1" })],
     ]);
     Object.defineProperty(window, "localStorage", {
@@ -83,16 +81,12 @@ describe("AuthProvider", () => {
       expect(screen.getByTestId("loading").textContent).toBe("false");
     });
     expect(screen.getByTestId("auth-enabled").textContent).toBe("false");
-    expect(storage.get("excalidash-access-token")).toBeUndefined();
-    expect(storage.get("excalidash-refresh-token")).toBeUndefined();
     expect(storage.get("excalidash-user")).toBeUndefined();
   });
 
   it("uses cached auth-disabled mode when /auth/status is temporarily unavailable", async () => {
     const storage = new Map<string, string>([
       ["excalidash-auth-enabled", "false"],
-      ["excalidash-access-token", "token"],
-      ["excalidash-refresh-token", "refresh"],
       ["excalidash-user", JSON.stringify({ id: "u1" })],
     ]);
     Object.defineProperty(window, "localStorage", {
@@ -108,7 +102,7 @@ describe("AuthProvider", () => {
       },
     });
 
-    vi.spyOn(axios, "get").mockRejectedValueOnce(new Error("network down"));
+    vi.spyOn(axios, "get").mockRejectedValue(new Error("network down"));
 
     render(
       <MemoryRouter>
@@ -122,8 +116,6 @@ describe("AuthProvider", () => {
       expect(screen.getByTestId("loading").textContent).toBe("false");
     });
     expect(screen.getByTestId("auth-enabled").textContent).toBe("false");
-    expect(storage.get("excalidash-access-token")).toBeUndefined();
-    expect(storage.get("excalidash-refresh-token")).toBeUndefined();
     expect(storage.get("excalidash-user")).toBeUndefined();
   });
 });
