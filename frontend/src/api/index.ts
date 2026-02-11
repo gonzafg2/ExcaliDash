@@ -69,6 +69,10 @@ export const clearCsrfToken = (): void => {
 export interface AuthStatusResponse {
   authEnabled?: boolean;
   enabled?: boolean;
+  authMode?: "local" | "hybrid" | "oidc_enforced";
+  oidcEnabled?: boolean;
+  oidcEnforced?: boolean;
+  oidcProvider?: string;
   bootstrapRequired?: boolean;
   authOnboardingRequired?: boolean;
   authOnboardingMode?: "migration" | "fresh";
@@ -90,6 +94,13 @@ export const authStatus = async (): Promise<AuthStatusResponse> => {
     { withCredentials: true }
   );
   return response.data;
+};
+
+export const startOidcSignIn = (returnTo?: string): void => {
+  const fallbackPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  const requestedPath = typeof returnTo === "string" && returnTo.startsWith("/") ? returnTo : fallbackPath;
+  const safeReturnTo = requestedPath.startsWith("/") ? requestedPath : "/";
+  window.location.href = `/api/auth/oidc/start?returnTo=${encodeURIComponent(safeReturnTo)}`;
 };
 
 export const authMe = async (): Promise<{ user: AuthUser }> => {
@@ -204,6 +215,16 @@ const getAuthEnabledStatus = async (): Promise<boolean | null> => {
 };
 
 const redirectToLogin = async () => {
+  try {
+    const status = await authStatus();
+    if (status?.oidcEnforced) {
+      startOidcSignIn();
+      return;
+    }
+  } catch {
+    // Best-effort status probe; fall through to legacy behavior.
+  }
+
   const authEnabled = await getAuthEnabledStatus();
   if (authEnabled === false) return;
   if (window.location.pathname !== '/login') {

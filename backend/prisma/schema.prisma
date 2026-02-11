@@ -21,6 +21,7 @@ model User {
   role                String              @default("USER")
   mustResetPassword   Boolean             @default(false)
   isActive            Boolean             @default(true)
+  authIdentities      AuthIdentity[]
   drawings            Drawing[]
   collections         Collection[]
   passwordResetTokens PasswordResetToken[]
@@ -110,4 +111,21 @@ model AuditLog {
   userAgent String?
   details   String?  // JSON string for additional details
   createdAt DateTime @default(now())
+}
+
+model AuthIdentity {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider    String
+  issuer      String
+  subject     String
+  emailAtLink String
+  lastLoginAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([issuer, subject])
+  @@unique([provider, userId])
+  @@index([userId])
 }

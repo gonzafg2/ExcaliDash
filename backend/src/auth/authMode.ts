@@ -1,4 +1,5 @@
 import { PrismaClient } from "../generated/client";
+import { config } from "../config";
 
 export const BOOTSTRAP_USER_ID = "bootstrap-admin";
 export const DEFAULT_SYSTEM_CONFIG_ID = "default";
@@ -30,7 +31,7 @@ export const createAuthModeService = (
       update: {},
       create: {
         id: DEFAULT_SYSTEM_CONFIG_ID,
-        authEnabled: false,
+        authEnabled: config.authMode !== "local",
         authOnboardingCompleted: false,
         registrationEnabled: false,
         authLoginRateLimitEnabled: true,
@@ -41,6 +42,12 @@ export const createAuthModeService = (
   };
 
   const getAuthEnabled = async (): Promise<boolean> => {
+    if (config.authMode !== "local") {
+      const now = Date.now();
+      authEnabledCache = { value: true, fetchedAt: now };
+      return true;
+    }
+
     const now = Date.now();
     if (authEnabledCache && now - authEnabledCache.fetchedAt < authEnabledTtlMs) {
       return authEnabledCache.value;

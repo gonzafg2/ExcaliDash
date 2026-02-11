@@ -44,10 +44,16 @@ type RegisterCoreRoutesDeps = {
     impersonatorId?: string;
   };
   config: {
+    authMode: "local" | "hybrid" | "oidc_enforced";
     jwtSecret: string;
     jwtAccessExpiresIn: string;
     enableRefreshTokenRotation: boolean;
     enableAuditLogging: boolean;
+    oidc: {
+      enabled: boolean;
+      enforced: boolean;
+      providerName: string;
+    };
   };
   generateTokens: (
     userId: string,
@@ -151,6 +157,12 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
   router.post("/register", loginAttemptRateLimiter, async (req: Request, res: Response) => {
     try {
       if (!(await ensureAuthEnabled(res))) return;
+      if (config.authMode === "oidc_enforced") {
+        return res.status(403).json({
+          error: "Forbidden",
+          message: "Local registration is disabled in OIDC enforced mode",
+        });
+      }
       if (!requireCsrf(req, res)) return;
       const parsed = registerSchema.safeParse(req.body);
 
@@ -415,6 +427,12 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
   router.post("/login", loginAttemptRateLimiter, async (req: Request, res: Response) => {
     try {
       if (!(await ensureAuthEnabled(res))) return;
+      if (config.authMode === "oidc_enforced") {
+        return res.status(403).json({
+          error: "Forbidden",
+          message: "Local login is disabled in OIDC enforced mode",
+        });
+      }
       const parsed = loginSchema.safeParse(req.body);
 
       if (!parsed.success) {
@@ -835,16 +853,24 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
     try {
       const systemConfig = await ensureSystemConfig();
       const onboarding = await getAuthOnboardingStatus(systemConfig);
-      if (!systemConfig.authEnabled) {
+      const effectiveAuthEnabled =
+        config.authMode !== "local" ? true : systemConfig.authEnabled;
+      const onboardingRequired = config.authMode === "local" ? onboarding.needsChoice : false;
+      const onboardingMode = config.authMode === "local" ? onboarding.mode : null;
+      if (!effectiveAuthEnabled) {
         return res.json({
           enabled: false,
           authenticated: false,
           authEnabled: false,
+          authMode: config.authMode,
+          oidcEnabled: config.oidc.enabled,
+          oidcEnforced: config.oidc.enforced,
+          oidcProvider: config.oidc.providerName,
           registrationEnabled: false,
           bootstrapRequired: false,
-          authOnboardingRequired: onboarding.needsChoice,
-          authOnboardingMode: onboarding.mode,
-          authOnboardingRecommended: onboarding.needsChoice ? "enable" : null,
+          authOnboardingRequired: onboardingRequired,
+          authOnboardingMode: onboardingMode,
+          authOnboardingRecommended: onboardingRequired ? "enable" : null,
           user: null,
         });
       }
@@ -854,18 +880,23 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
         select: { id: true, isActive: true },
       });
       const bootstrapRequired =
+        !config.oidc.enforced &&
         Boolean(bootstrapUser && bootstrapUser.isActive === false) &&
         onboarding.activeUsers === 0;
 
       res.json({
         enabled: true,
         authEnabled: true,
+        authMode: config.authMode,
+        oidcEnabled: config.oidc.enabled,
+        oidcEnforced: config.oidc.enforced,
+        oidcProvider: config.oidc.providerName,
         authenticated: Boolean(req.user),
         registrationEnabled: systemConfig.registrationEnabled,
         bootstrapRequired,
-        authOnboardingRequired: onboarding.needsChoice,
-        authOnboardingMode: onboarding.mode,
-        authOnboardingRecommended: onboarding.needsChoice ? "enable" : null,
+        authOnboardingRequired: onboardingRequired,
+        authOnboardingMode: onboardingMode,
+        authOnboardingRecommended: onboardingRequired ? "enable" : null,
         user: req.user
           ? {
               id: req.user.id,
@@ -889,6 +920,12 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
 
   router.post("/onboarding-choice", optionalAuth, async (req: Request, res: Response) => {
     try {
+      if (config.authMode !== "local") {
+        return res.status(409).json({
+          error: "Conflict",
+          message: "Onboarding choice is managed by AUTH_MODE configuration",
+        });
+      }
       if (!requireCsrf(req, res)) return;
       const parsed = authOnboardingChoiceSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -944,6 +981,12 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
 
   router.post("/auth-enabled", requireAuth, async (req: Request, res: Response) => {
     try {
+      if (config.authMode === "oidc_enforced") {
+        return res.status(409).json({
+          error: "Conflict",
+          message: "Authentication mode is managed by AUTH_MODE=oidc_enforced",
+        });
+      }
       if (!requireCsrf(req, res)) return;
       if (!req.user) {
         return res

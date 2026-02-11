@@ -165,6 +165,31 @@ backend:
 
 Without this, each container generates its own ephemeral CSRF secret, causing token validation failures when requests are routed to different replicas. Single-container deployments work without this setting.
 
+### Authentication Modes (Local + OIDC)
+
+ExcaliDash supports three auth modes via backend `AUTH_MODE`:
+
+- `local` (default): native email/password login only.
+- `hybrid`: native login + OIDC login.
+- `oidc_enforced`: OIDC-only login (native login/register disabled).
+
+For OIDC modes (`hybrid` or `oidc_enforced`), set:
+
+```yaml
+backend:
+  environment:
+    - AUTH_MODE=oidc_enforced
+    - OIDC_PROVIDER_NAME=Authentik
+    - OIDC_ISSUER_URL=https://auth.example.com/application/o/excalidash/
+    - OIDC_CLIENT_ID=your-client-id
+    - OIDC_CLIENT_SECRET=your-client-secret
+    - OIDC_REDIRECT_URI=https://excalidash.example.com/api/auth/oidc/callback
+    - OIDC_SCOPES=openid profile email
+```
+
+In `oidc_enforced` mode, unauthenticated users are automatically redirected to `/api/auth/oidc/start`.
+Users are linked by `(issuer, sub)` first, then by verified email, and optionally auto-provisioned.
+
 # Development
 
 ## Clone the Repository

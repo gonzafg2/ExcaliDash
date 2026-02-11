@@ -12,6 +12,7 @@ export const Register: React.FC = () => {
   const {
     register,
     authEnabled,
+    oidcEnforced,
     bootstrapRequired,
     authOnboardingRequired,
     isAuthenticated,
@@ -25,6 +26,10 @@ export const Register: React.FC = () => {
       navigate('/auth-setup', { replace: true });
       return;
     }
+    if (oidcEnforced) {
+      navigate('/login', { replace: true });
+      return;
+    }
     if (!authEnabled) {
       navigate('/', { replace: true });
       return;
@@ -32,7 +37,7 @@ export const Register: React.FC = () => {
     if (isAuthenticated) {
       navigate('/', { replace: true });
     }
-  }, [authEnabled, authLoading, authOnboardingRequired, isAuthenticated, navigate]);
+  }, [authEnabled, authLoading, authOnboardingRequired, isAuthenticated, navigate, oidcEnforced]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -24,6 +24,10 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   authEnabled: boolean | null;
+  authMode: 'local' | 'hybrid' | 'oidc_enforced';
+  oidcEnabled: boolean;
+  oidcEnforced: boolean;
+  oidcProvider: string | null;
   bootstrapRequired: boolean;
   authOnboardingRequired: boolean;
   authOnboardingMode: 'migration' | 'fresh' | null;
@@ -42,6 +46,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [authEnabled, setAuthEnabled] = useState<boolean | null>(null);
+  const [authMode, setAuthMode] = useState<'local' | 'hybrid' | 'oidc_enforced'>('local');
+  const [oidcEnabled, setOidcEnabled] = useState(false);
+  const [oidcEnforced, setOidcEnforced] = useState(false);
+  const [oidcProvider, setOidcProvider] = useState<string | null>(null);
   const [bootstrapRequired, setBootstrapRequired] = useState(false);
   const [authOnboardingRequired, setAuthOnboardingRequired] = useState(false);
   const [authOnboardingMode, setAuthOnboardingMode] = useState<'migration' | 'fresh' | null>(null);
@@ -60,6 +68,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 : true;
           setAuthEnabled(enabled);
           localStorage.setItem(AUTH_ENABLED_CACHE_KEY, String(enabled));
+          const nextAuthMode =
+            statusResponse?.authMode === 'hybrid' || statusResponse?.authMode === 'oidc_enforced'
+              ? statusResponse.authMode
+              : 'local';
+          setAuthMode(nextAuthMode);
+          setOidcEnabled(Boolean(statusResponse?.oidcEnabled));
+          setOidcEnforced(Boolean(statusResponse?.oidcEnforced));
+          setOidcProvider(typeof statusResponse?.oidcProvider === 'string' ? statusResponse.oidcProvider : null);
           setBootstrapRequired(Boolean(statusResponse?.bootstrapRequired));
           setAuthOnboardingRequired(Boolean(statusResponse?.authOnboardingRequired));
           setAuthOnboardingMode(
@@ -77,6 +93,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           const cachedAuthEnabled = localStorage.getItem(AUTH_ENABLED_CACHE_KEY);
           if (cachedAuthEnabled === "false") {
             setAuthEnabled(false);
+            setAuthMode('local');
+            setOidcEnabled(false);
+            setOidcEnforced(false);
+            setOidcProvider(null);
             setBootstrapRequired(false);
             setAuthOnboardingRequired(false);
             setAuthOnboardingMode(null);
@@ -85,6 +105,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
           }
           setAuthEnabled(true);
+          setAuthMode('local');
+          setOidcEnabled(false);
+          setOidcEnforced(false);
+          setOidcProvider(null);
           setBootstrapRequired(false);
           setAuthOnboardingRequired(false);
           setAuthOnboardingMode(null);
@@ -192,6 +216,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         user,
         loading,
         authEnabled,
+        authMode,
+        oidcEnabled,
+        oidcEnforced,
+        oidcProvider,
         bootstrapRequired,
         authOnboardingRequired,
         authOnboardingMode,
