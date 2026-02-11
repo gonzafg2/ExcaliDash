@@ -16,6 +16,9 @@ export const Login: React.FC = () => {
     login,
     logout,
     authEnabled,
+    oidcEnabled,
+    oidcEnforced,
+    oidcProvider,
     bootstrapRequired,
     authOnboardingRequired,
     isAuthenticated,
@@ -25,7 +28,15 @@ export const Login: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const queryMustReset = searchParams.get('mustReset') === '1';
+  const oidcErrorCode = searchParams.get('oidcError');
+  const oidcErrorMessage = searchParams.get('oidcErrorMessage');
+  const oidcReturnTo = searchParams.get('returnTo') || '/';
   const mustReset = Boolean(user?.mustResetPassword) || queryMustReset;
+
+  useEffect(() => {
+    if (!oidcErrorCode) return;
+    setError(oidcErrorMessage || 'OIDC sign-in failed');
+  }, [oidcErrorCode, oidcErrorMessage]);
 
   useEffect(() => {
     if (authLoading || authEnabled === null) return;
@@ -41,11 +52,28 @@ export const Login: React.FC = () => {
       navigate('/register', { replace: true });
       return;
     }
+    if (oidcEnforced && !mustReset) {
+      if (!oidcErrorCode) {
+        api.startOidcSignIn(oidcReturnTo);
+      }
+      return;
+    }
     if (isAuthenticated) {
       if (mustReset) return;
       navigate('/', { replace: true });
     }
-  }, [authEnabled, authLoading, authOnboardingRequired, bootstrapRequired, isAuthenticated, mustReset, navigate]);
+  }, [
+    authEnabled,
+    authLoading,
+    authOnboardingRequired,
+    bootstrapRequired,
+    isAuthenticated,
+    mustReset,
+    navigate,
+    oidcEnforced,
+    oidcErrorCode,
+    oidcReturnTo,
+  ]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -114,9 +142,13 @@ export const Login: React.FC = () => {
         <div className="text-center">
           <Logo className="mx-auto h-12 w-auto" />
           <h2 className="mt-6 text-3xl font-extrabold text-gray-900 dark:text-white">
-            {mustReset ? 'Reset your password' : 'Sign in to your account'}
+            {mustReset
+              ? 'Reset your password'
+              : oidcEnforced
+                ? `Sign in with ${oidcProvider || 'OIDC'}`
+                : 'Sign in to your account'}
           </h2>
-          {!mustReset ? (
+          {!mustReset && !oidcEnforced ? (
             <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
               Or{' '}
               <Link
@@ -126,9 +158,13 @@ export const Login: React.FC = () => {
                 create a new account
               </Link>
             </p>
-          ) : (
+          ) : mustReset ? (
             <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
               Your admin requires you to set a new password before using ExcaliDash.
+            </p>
+          ) : (
+            <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+              You will be redirected to {oidcProvider || 'your identity provider'}.
             </p>
           )}
         </div>
@@ -138,8 +174,19 @@ export const Login: React.FC = () => {
               <div className="text-sm text-red-800 dark:text-red-200">{error}</div>
             </div>
           )}
-          <div className="rounded-md shadow-sm -space-y-px">
-            {!mustReset ? (
+          {oidcEnforced && !mustReset ? (
+            <div>
+              <button
+                type="button"
+                onClick={() => api.startOidcSignIn(oidcReturnTo)}
+                className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              >
+                Continue with {oidcProvider || 'OIDC'}
+              </button>
+            </div>
+          ) : (
+            <div className="rounded-md shadow-sm -space-y-px">
+              {!mustReset ? (
               <>
                 <div>
                   <label htmlFor="email" className="sr-only">
@@ -174,7 +221,7 @@ export const Login: React.FC = () => {
                   />
                 </div>
               </>
-            ) : (
+              ) : (
               <>
                 <div>
                   <label htmlFor="newPassword" className="sr-only">
@@ -211,10 +258,11 @@ export const Login: React.FC = () => {
                   />
                 </div>
               </>
-            )}
-          </div>
+              )}
+            </div>
+          )}
 
-          {!mustReset && (
+          {!mustReset && !oidcEnforced && (
             <div className="flex justify-end">
               <Link
                 to="/reset-password"
@@ -225,15 +273,31 @@ export const Login: React.FC = () => {
             </div>
           )}
 
-          <div>
-            <button
-              type="submit"
-              disabled={loading}
-              className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {mustReset ? (loading ? 'Updating...' : 'Set new password') : (loading ? 'Signing in...' : 'Sign in')}
-            </button>
-          </div>
+          {(!oidcEnforced || mustReset) && (
+            <div>
+              <button
+                type="submit"
+                disabled={loading}
+                className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {mustReset
+                  ? (loading ? 'Updating...' : 'Set new password')
+                  : (loading ? 'Signing in...' : 'Sign in')}
+              </button>
+            </div>
+          )}
+
+          {!mustReset && oidcEnabled && !oidcEnforced && (
+            <div>
+              <button
+                type="button"
+                onClick={() => api.startOidcSignIn('/')}
+                className="group relative w-full flex justify-center py-2 px-4 border border-gray-300 dark:border-gray-700 text-sm font-medium rounded-md text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              >
+                Continue with {oidcProvider || 'OIDC'}
+              </button>
+            </div>
+          )}
 
           {mustReset && (
             <div className="text-center">

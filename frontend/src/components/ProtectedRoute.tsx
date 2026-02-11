@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { startOidcSignIn } from '../api';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -12,10 +13,23 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
     isAuthenticated,
     loading,
     authEnabled,
+    oidcEnforced,
     bootstrapRequired,
     authOnboardingRequired,
     user,
   } = useAuth();
+
+  const OidcRedirect: React.FC<{ returnTo: string }> = ({ returnTo }) => {
+    useEffect(() => {
+      startOidcSignIn(returnTo);
+    }, [returnTo]);
+
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-gray-600 dark:text-gray-400">Redirecting to sign-in...</div>
+      </div>
+    );
+  };
 
   if (loading || authEnabled === null) {
     return (
@@ -38,6 +52,10 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
     // If auth is enabled but no admin exists yet, force bootstrap registration.
     if (bootstrapRequired) {
       return <Navigate to="/register" replace />;
+    }
+    if (oidcEnforced) {
+      const returnTo = `${location.pathname}${location.search}${location.hash}`;
+      return <OidcRedirect returnTo={returnTo} />;
     }
     return <Navigate to="/login" replace />;
   }

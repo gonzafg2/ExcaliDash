@@ -8,6 +8,7 @@ services:
       - DATABASE_URL=file:/app/prisma/dev.db
       - PORT=8000
       - NODE_ENV=production
+      - AUTH_MODE=${AUTH_MODE:-local}
       # Keep disabled by default; only enable when a trusted proxy sanitizes forwarded headers.
       - TRUST_PROXY=false
       # Optional for single-instance deployments:
@@ -15,6 +16,12 @@ services:
       # Recommended to set explicitly for portability and multi-instance setups.
       - JWT_SECRET=${JWT_SECRET}
       - CSRF_SECRET=${CSRF_SECRET}
+      # Optional OIDC settings (required for AUTH_MODE=hybrid or oidc_enforced)
+      # - OIDC_PROVIDER_NAME=Authentik
+      # - OIDC_ISSUER_URL=https://auth.example.com/application/o/excalidash/
+      # - OIDC_CLIENT_ID=your-client-id
+      # - OIDC_CLIENT_SECRET=your-client-secret
+      # - OIDC_REDIRECT_URI=https://excalidash.example.com/api/auth/oidc/callback
     volumes:
       - backend-data:/app/prisma
     networks:

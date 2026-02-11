@@ -22,6 +22,13 @@ type ImpersonationTargetsResponse = {
   users: ImpersonationTarget[];
 };
 
+type AuthStatusResponse = {
+  authenticated?: boolean;
+  user?: {
+    impersonatorId?: string;
+  } | null;
+};
+
 type ImpersonateResponse = {
   user: {
     id: string;
@@ -46,6 +53,11 @@ export const ImpersonationBanner: React.FC = () => {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
+  const clearLocalImpersonation = () => {
+    localStorage.removeItem(IMPERSONATION_KEY);
+    setImpersonation(null);
+  };
+
   useEffect(() => {
     if (!authEnabled) {
       setImpersonation(null);
@@ -54,6 +66,20 @@ export const ImpersonationBanner: React.FC = () => {
 
     const sync = () => setImpersonation(readImpersonationState());
     sync();
+
+    const verifyServerImpersonationState = async () => {
+      try {
+        const response = await api.get<AuthStatusResponse>('/auth/status');
+        const serverImpersonating = Boolean(response.data?.authenticated && response.data?.user?.impersonatorId);
+        if (!serverImpersonating && readImpersonationState()) {
+          clearLocalImpersonation();
+        }
+      } catch {
+        // Ignore probe failures; retry on next render/event.
+      }
+    };
+
+    void verifyServerImpersonationState();
     window.addEventListener('storage', sync);
     return () => window.removeEventListener('storage', sync);
   }, [authEnabled]);
@@ -116,6 +142,14 @@ export const ImpersonationBanner: React.FC = () => {
       let message = 'Failed to stop impersonation';
       if (isAxiosError(err)) {
         message = err.response?.data?.message || err.response?.data?.error || message;
+        if (
+          err.response?.status === 409 &&
+          /not currently impersonating/i.test(message)
+        ) {
+          clearLocalImpersonation();
+          window.location.reload();
+          return;
+        }
       }
       setError(message);
       setBusy(false);
@@ -159,36 +193,38 @@ export const ImpersonationBanner: React.FC = () => {
   }
 
   return (
-    <div className="mb-4 rounded-2xl border-2 border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-3 sm:p-4 shadow-[2px_2px_0px_0px_rgba(0,0,0,0.18)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.12)]">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-amber-900 dark:text-amber-200">
-            <LogIn size={16} />
-            <span className="text-sm font-bold uppercase tracking-wide">Impersonating:</span>
+    <div className="sticky top-0 z-[45] -mt-2 mb-6 rounded-xl border border-red-200 dark:border-red-800/50 bg-red-50/80 dark:bg-red-950/30 backdrop-blur-md px-3 py-2 shadow-sm transition-all duration-200">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 text-red-700 dark:text-red-400 flex-shrink-0">
+            <LogIn size={14} strokeWidth={2.5} />
+            <span className="text-[10px] font-black uppercase tracking-wider">Impersonating</span>
           </div>
-          <div className="mt-1 text-sm font-semibold text-amber-900 dark:text-amber-200 truncate">
-            {impersonation.target.name} ({impersonation.target.email})
-          </div>
-          <div className="text-xs text-amber-800/90 dark:text-amber-200/80 truncate">
-            Acting as this account. Stop to return to {impersonation.impersonator.email}.
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-sm font-bold text-red-900 dark:text-red-100 truncate">
+              {impersonation.target.name}
+            </span>
+            <span className="hidden sm:inline text-xs font-medium text-red-800/60 dark:text-red-200/40 truncate">
+              {impersonation.target.email}
+            </span>
           </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 lg:flex-shrink-0 lg:justify-end">
-          <label className="text-xs font-bold uppercase tracking-wide text-amber-900 dark:text-amber-200">
-            Switch user:
-          </label>
+        <div className="flex items-center gap-2 ml-auto">
+          <div className="hidden lg:flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-red-700/60 dark:text-red-400/40">
+            Switch:
+          </div>
           <select
             value={impersonation.target.id}
             onChange={(e) => {
               void switchTarget(e.target.value);
             }}
             disabled={busy || loadingTargets || options.length === 0}
-            className="min-w-[220px] max-w-[320px] px-3 py-2 rounded-xl border-2 border-amber-300 dark:border-amber-700 bg-white dark:bg-neutral-900 text-sm font-semibold text-slate-900 dark:text-neutral-100 outline-none disabled:opacity-70"
+            className="h-8 min-w-[140px] max-w-[200px] px-2 rounded-lg border border-red-200 dark:border-red-800/50 bg-white/50 dark:bg-neutral-900/50 text-xs font-bold text-red-900 dark:text-red-100 outline-none hover:border-red-300 dark:hover:border-red-700 transition-colors disabled:opacity-50"
           >
             {options.map((target) => (
               <option key={target.id} value={target.id}>
-                {target.name} ({target.email})
+                {target.name}
               </option>
             ))}
           </select>
@@ -196,28 +232,28 @@ export const ImpersonationBanner: React.FC = () => {
             type="button"
             onClick={stop}
             disabled={busy}
-            className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl border-2 border-amber-300 dark:border-amber-700 bg-white dark:bg-neutral-900 text-sm font-bold text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-all disabled:opacity-70"
+            className="h-8 flex items-center justify-center gap-1.5 px-3 rounded-lg bg-red-600 dark:bg-red-600/80 text-[11px] font-black uppercase tracking-wider text-white hover:bg-red-700 dark:hover:bg-red-500 transition-all disabled:opacity-50 shadow-sm shadow-red-900/10"
           >
-            <XCircle size={15} />
-            Stop
+            <XCircle size={14} strokeWidth={2.5} />
+            <span className="hidden sm:inline">Stop</span>
           </button>
         </div>
       </div>
 
       {(loadingTargets || error) && (
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-medium text-amber-900 dark:text-amber-200">
+        <div className="mt-1.5 pt-1.5 border-t border-red-200/50 dark:border-red-800/20 flex items-center gap-3 text-[10px] font-bold text-red-800 dark:text-red-300">
           {loadingTargets ? (
-            <span className="inline-flex items-center gap-1">
-              <RefreshCw size={12} className="animate-spin" />
-              Loading users...
+            <span className="inline-flex items-center gap-1.5">
+              <RefreshCw size={10} className="animate-spin" />
+              Syncing targets...
             </span>
           ) : null}
-          {error ? <span>{error}</span> : null}
+          {error ? <span className="truncate">{error}</span> : null}
           {error ? (
             <button
               type="button"
               onClick={() => void loadTargets()}
-              className="inline-flex items-center gap-1 rounded-lg border border-amber-300 dark:border-amber-700 px-2 py-1"
+              className="px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900/40 border border-red-200 dark:border-red-700/50 hover:bg-red-200 transition-colors"
             >
               Retry
             </button>

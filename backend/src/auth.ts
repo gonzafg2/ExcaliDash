@@ -14,6 +14,7 @@ import rateLimit, { MemoryStore } from "express-rate-limit";
 import { registerAccountRoutes } from "./auth/accountRoutes";
 import { registerAdminRoutes } from "./auth/adminRoutes";
 import { registerCoreRoutes } from "./auth/coreRoutes";
+import { registerOidcRoutes } from "./auth/oidcRoutes";
 import { prisma as defaultPrisma } from "./db/prisma";
 import {
   BOOTSTRAP_USER_ID,
@@ -63,7 +64,9 @@ export const createAuthRouter = (deps: CreateAuthRouterDeps): express.Router => 
 
   const ensureAuthEnabled = async (res: Response): Promise<boolean> => {
     const systemConfig = await ensureSystemConfig();
-    if (!systemConfig.authEnabled) {
+    const authEnabled =
+      config.authMode !== "local" ? true : systemConfig.authEnabled;
+    if (!authEnabled) {
       res.status(404).json({
         error: "Not found",
         message: "Authentication is disabled",
@@ -367,6 +370,18 @@ export const createAuthRouter = (deps: CreateAuthRouterDeps): express.Router => 
 
   const getRefreshTokenExpiresAt = (): Date =>
     resolveExpiresAt(config.jwtRefreshExpiresIn, 7 * 24 * 60 * 60 * 1000);
+
+  registerOidcRoutes({
+    router,
+    prisma,
+    ensureAuthEnabled,
+    sanitizeText,
+    generateTokens,
+    setAuthCookies,
+    getRefreshTokenExpiresAt,
+    isMissingRefreshTokenTableError,
+    config,
+  });
 
   registerCoreRoutes({
     router,
