@@ -31,6 +31,7 @@ import { prisma } from "./db/prisma";
 import { createDrawingsCacheStore } from "./server/drawingsCache";
 import { registerCsrfProtection } from "./server/csrf";
 import { registerSocketHandlers } from "./server/socket";
+import { issueBootstrapSetupCodeIfRequired } from "./auth/bootstrapSetupCode";
 
 const backendRoot = path.resolve(__dirname, "../");
 console.log("Resolved DATABASE_URL:", process.env.DATABASE_URL);
@@ -619,6 +620,16 @@ const isMain =
 if (isMain) {
   httpServer.listen(PORT, async () => {
     await initializeUploadDir();
+    try {
+      await issueBootstrapSetupCodeIfRequired({
+        prisma,
+        ttlMs: config.bootstrapSetupCodeTtlMs,
+        authMode: config.authMode,
+        reason: "startup",
+      });
+    } catch (error) {
+      console.error("Failed to issue bootstrap setup code:", error);
+    }
     console.log(`Server running on port ${PORT}`);
     console.log(`Environment: ${config.nodeEnv}`);
     console.log(`Frontend URL: ${config.frontendUrl}`);

@@ -227,8 +227,6 @@ export const Profile: React.FC = () => {
         try {
             const response = await api.api.put<{
                 user: { id: string; email: string; name: string; createdAt: string; updatedAt: string };
-                accessToken: string;
-                refreshToken: string;
             }>('/auth/email', {
                 email: email.trim(),
                 currentPassword: emailCurrentPassword,

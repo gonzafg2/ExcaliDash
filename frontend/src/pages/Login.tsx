@@ -118,8 +118,6 @@ export const Login: React.FC = () => {
     try {
       const response = await api.api.post<{
         user: { id: string; email: string; name: string; role?: string; mustResetPassword?: boolean };
-        accessToken: string;
-        refreshToken: string;
       }>('/auth/must-reset-password', { newPassword });
 
       localStorage.setItem(USER_KEY, JSON.stringify(response.data.user));

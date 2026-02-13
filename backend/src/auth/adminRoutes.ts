@@ -743,8 +743,6 @@ export const registerAdminRoutes = (deps: RegisterAdminRoutesDeps) => {
           role: target.role,
           mustResetPassword: target.mustResetPassword,
         },
-        accessToken,
-        refreshToken,
       });
     } catch (error) {
       console.error("Impersonation error:", error);

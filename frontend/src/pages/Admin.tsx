@@ -1,11 +1,12 @@
-import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useBeforeUnload, useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../api';
 import type { Collection } from '../types';
 import { Shield, UserPlus, RefreshCw, UserCog, LogIn, Settings as SettingsIcon, KeyRound } from 'lucide-react';
+import { Toaster, toast } from 'sonner';
 import {
   IMPERSONATION_KEY,
   type ImpersonationState,
@@ -23,6 +24,17 @@ type AdminUser = {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+};
+
+type LoginRateLimitFormState = {
+  enabled: boolean;
+  windowMinutes: number;
+  max: number;
+};
+
+const sanitizePositiveInt = (value: number, fallback = 1) => {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(1, Math.round(value));
 };
 
 export const Admin: React.FC = () => {
@@ -54,8 +66,30 @@ export const Admin: React.FC = () => {
   const [loginRateLimitEnabled, setLoginRateLimitEnabled] = useState(true);
   const [loginRateLimitWindowMinutes, setLoginRateLimitWindowMinutes] = useState(15);
   const [loginRateLimitMax, setLoginRateLimitMax] = useState(20);
+  const [savedLoginRateLimit, setSavedLoginRateLimit] = useState<LoginRateLimitFormState | null>(null);
+  const [loginRateLimitAutoSaveQueued, setLoginRateLimitAutoSaveQueued] = useState(false);
+  const lastAutoSaveAttemptKeyRef = useRef<string | null>(null);
   const [resetIdentifier, setResetIdentifier] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
+
+  const normalizedLoginRateLimit = useMemo<LoginRateLimitFormState>(
+    () => ({
+      enabled: loginRateLimitEnabled,
+      windowMinutes: sanitizePositiveInt(loginRateLimitWindowMinutes),
+      max: sanitizePositiveInt(loginRateLimitMax),
+    }),
+    [loginRateLimitEnabled, loginRateLimitWindowMinutes, loginRateLimitMax]
+  );
+
+  const loginRateLimitDirty = Boolean(
+    savedLoginRateLimit &&
+      (savedLoginRateLimit.enabled !== normalizedLoginRateLimit.enabled ||
+        savedLoginRateLimit.windowMinutes !== normalizedLoginRateLimit.windowMinutes ||
+        savedLoginRateLimit.max !== normalizedLoginRateLimit.max)
+  );
+
+  const hasPendingLoginRateLimitChanges = loginRateLimitDirty || loginRateLimitSaving || loginRateLimitAutoSaveQueued;
+  const normalizedLoginRateLimitKey = `${normalizedLoginRateLimit.enabled}:${normalizedLoginRateLimit.windowMinutes}:${normalizedLoginRateLimit.max}`;
 
   useEffect(() => {
     if (authEnabled === false) {
@@ -119,14 +153,23 @@ export const Admin: React.FC = () => {
   const loadLoginRateLimitConfig = async () => {
     setLoginRateLimitLoading(true);
     setError('');
+    setSavedLoginRateLimit(null);
+    setLoginRateLimitAutoSaveQueued(false);
+    lastAutoSaveAttemptKeyRef.current = null;
     try {
       const response = await api.api.get<{
         config: { enabled: boolean; windowMs: number; max: number };
       }>('/auth/rate-limit/login');
       const cfg = response.data.config;
-      setLoginRateLimitEnabled(Boolean(cfg.enabled));
-      setLoginRateLimitMax(Number(cfg.max));
-      setLoginRateLimitWindowMinutes(Math.max(1, Math.round(Number(cfg.windowMs) / 60000)));
+      const nextConfig: LoginRateLimitFormState = {
+        enabled: Boolean(cfg.enabled),
+        windowMinutes: sanitizePositiveInt(Number(cfg.windowMs) / 60000),
+        max: sanitizePositiveInt(Number(cfg.max)),
+      };
+      setLoginRateLimitEnabled(nextConfig.enabled);
+      setLoginRateLimitWindowMinutes(nextConfig.windowMinutes);
+      setLoginRateLimitMax(nextConfig.max);
+      setSavedLoginRateLimit(nextConfig);
     } catch (err: unknown) {
       let message = 'Failed to load rate limit config';
       if (api.isAxiosError(err)) {
@@ -138,25 +181,32 @@ export const Admin: React.FC = () => {
     }
   };
 
-  const saveLoginRateLimitConfig = async () => {
+  const saveLoginRateLimitConfig = useCallback(async () => {
+    if (loginRateLimitSaving) return;
     setLoginRateLimitSaving(true);
     setError('');
-    setSuccess('');
     try {
       const payload = {
-        enabled: loginRateLimitEnabled,
-        windowMs: Math.max(10_000, Math.round(loginRateLimitWindowMinutes * 60_000)),
-        max: Math.max(1, Math.round(loginRateLimitMax)),
+        enabled: normalizedLoginRateLimit.enabled,
+        windowMs: Math.max(10_000, Math.round(normalizedLoginRateLimit.windowMinutes * 60_000)),
+        max: sanitizePositiveInt(normalizedLoginRateLimit.max),
       };
       const response = await api.api.put<{
         config: { enabled: boolean; windowMs: number; max: number };
       }>('/auth/rate-limit/login', payload);
 
       const cfg = response.data.config;
-      setLoginRateLimitEnabled(Boolean(cfg.enabled));
-      setLoginRateLimitMax(Number(cfg.max));
-      setLoginRateLimitWindowMinutes(Math.max(1, Math.round(Number(cfg.windowMs) / 60000)));
-      setSuccess('Login rate limit updated');
+      const nextConfig: LoginRateLimitFormState = {
+        enabled: Boolean(cfg.enabled),
+        windowMinutes: sanitizePositiveInt(Number(cfg.windowMs) / 60000),
+        max: sanitizePositiveInt(Number(cfg.max)),
+      };
+      setLoginRateLimitEnabled(nextConfig.enabled);
+      setLoginRateLimitWindowMinutes(nextConfig.windowMinutes);
+      setLoginRateLimitMax(nextConfig.max);
+      setSavedLoginRateLimit(nextConfig);
+      setLoginRateLimitAutoSaveQueued(false);
+      toast.success('Login rate limit changes saved');
     } catch (err: unknown) {
       let message = 'Failed to save rate limit config';
       if (api.isAxiosError(err)) {
@@ -166,7 +216,7 @@ export const Admin: React.FC = () => {
     } finally {
       setLoginRateLimitSaving(false);
     }
-  };
+  }, [loginRateLimitSaving, normalizedLoginRateLimit]);
 
   const resetLoginRateLimit = async () => {
     const identifier = resetIdentifier.trim();
@@ -198,6 +248,49 @@ export const Admin: React.FC = () => {
     void loadUsers();
     void loadLoginRateLimitConfig();
   }, [authEnabled, isAdmin]);
+
+  useEffect(() => {
+    if (!authEnabled || !isAdmin) return;
+    if (!savedLoginRateLimit || !loginRateLimitDirty || loginRateLimitSaving) return;
+    if (lastAutoSaveAttemptKeyRef.current === normalizedLoginRateLimitKey) return;
+
+    setLoginRateLimitAutoSaveQueued(true);
+    const timeoutId = window.setTimeout(() => {
+      setLoginRateLimitAutoSaveQueued(false);
+      lastAutoSaveAttemptKeyRef.current = normalizedLoginRateLimitKey;
+      void saveLoginRateLimitConfig();
+    }, 900);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    authEnabled,
+    isAdmin,
+    savedLoginRateLimit,
+    loginRateLimitDirty,
+    loginRateLimitSaving,
+    normalizedLoginRateLimitKey,
+    saveLoginRateLimitConfig,
+  ]);
+
+  useEffect(() => {
+    if (!loginRateLimitDirty) {
+      setLoginRateLimitAutoSaveQueued(false);
+      lastAutoSaveAttemptKeyRef.current = null;
+    }
+  }, [loginRateLimitDirty]);
+
+  useBeforeUnload(
+    useCallback(
+      (event: BeforeUnloadEvent) => {
+        if (!hasPendingLoginRateLimitChanges) return;
+        event.preventDefault();
+        event.returnValue = '';
+      },
+      [hasPendingLoginRateLimitChanges]
+    )
+  );
 
   const handleSelectCollection = (id: string | null | undefined) => {
     if (id === undefined) navigate('/');
@@ -291,8 +384,6 @@ export const Admin: React.FC = () => {
     try {
       const response = await api.api.post<{
         user: { id: string; email: string; name: string };
-        accessToken: string;
-        refreshToken: string;
       }>('/auth/impersonate', { userId: target.id });
 
       const state: ImpersonationState = {
@@ -448,23 +539,35 @@ export const Admin: React.FC = () => {
               </select>
             </div>
 
-            <div className="flex items-center gap-3 pt-8">
-              <label className="inline-flex items-center gap-2 text-sm font-bold text-slate-700 dark:text-neutral-300">
-                <input
-                  type="checkbox"
-                  checked={createMustReset}
-                  onChange={e => setCreateMustReset(e.target.checked)}
-                />
-                Must reset password
-              </label>
-              <label className="inline-flex items-center gap-2 text-sm font-bold text-slate-700 dark:text-neutral-300">
-                <input
-                  type="checkbox"
-                  checked={createActive}
-                  onChange={e => setCreateActive(e.target.checked)}
-                />
-                Active
-              </label>
+            <div className="flex flex-col sm:flex-row items-center gap-4 pt-4">
+              <div className="flex-1 w-full">
+                <label className="block text-sm font-bold text-slate-700 dark:text-neutral-300 mb-2">Password Reset</label>
+                <button
+                  type="button"
+                  onClick={() => setCreateMustReset(!createMustReset)}
+                  className={`w-full px-4 py-3 rounded-xl border-2 font-bold transition-all text-sm ${
+                    createMustReset
+                      ? 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-200'
+                      : 'border-slate-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-slate-600 dark:text-neutral-300'
+                  }`}
+                >
+                  {createMustReset ? 'Must reset password' : 'No reset required'}
+                </button>
+              </div>
+              <div className="flex-1 w-full">
+                <label className="block text-sm font-bold text-slate-700 dark:text-neutral-300 mb-2">Account Status</label>
+                <button
+                  type="button"
+                  onClick={() => setCreateActive(!createActive)}
+                  className={`w-full px-4 py-3 rounded-xl border-2 font-bold transition-all text-sm ${
+                    createActive
+                      ? 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300'
+                      : 'border-slate-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-slate-600 dark:text-neutral-300'
+                  }`}
+                >
+                  {createActive ? 'Active' : 'Inactive'}
+                </button>
+              </div>
             </div>
 
             <div className="md:col-span-2 flex items-center justify-end gap-3 pt-2">
@@ -494,7 +597,7 @@ export const Admin: React.FC = () => {
           <div className="min-w-0">
             <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Login Rate Limiting</h2>
             <p className="text-sm text-slate-600 dark:text-neutral-400 font-medium">
-              Reduce brute-force attacks; disable only for trusted environments.
+              Reduce brute-force attacks; disable only for trusted environments. Changes are saved automatically.
             </p>
           </div>
           {loginRateLimitLoading && (
@@ -503,15 +606,19 @@ export const Admin: React.FC = () => {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="flex items-center gap-3 pt-1">
-            <label className="inline-flex items-center gap-2 text-sm font-bold text-slate-700 dark:text-neutral-300">
-              <input
-                type="checkbox"
-                checked={loginRateLimitEnabled}
-                onChange={e => setLoginRateLimitEnabled(e.target.checked)}
-              />
-              Enabled
-            </label>
+          <div>
+            <label className="block text-sm font-bold text-slate-700 dark:text-neutral-300 mb-2">Rate Limiting</label>
+            <button
+              type="button"
+              onClick={() => setLoginRateLimitEnabled(!loginRateLimitEnabled)}
+              className={`w-full px-4 py-3 rounded-xl border-2 font-bold transition-all text-sm ${
+                loginRateLimitEnabled
+                  ? 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300'
+                  : 'border-slate-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-slate-600 dark:text-neutral-300'
+              }`}
+            >
+              {loginRateLimitEnabled ? 'Enabled' : 'Disabled'}
+            </button>
           </div>
           <div>
             <label className="block text-sm font-bold text-slate-700 dark:text-neutral-300 mb-2">Window (minutes)</label>
@@ -554,19 +661,19 @@ export const Admin: React.FC = () => {
             </datalist>
           </div>
           <div className="flex items-center gap-3 flex-shrink-0">
+            <p className="text-xs sm:text-sm font-medium text-slate-500 dark:text-neutral-400">
+              {loginRateLimitSaving || loginRateLimitAutoSaveQueued
+                ? 'Saving changes…'
+                : loginRateLimitDirty
+                  ? 'Unsaved changes'
+                  : 'All changes saved'}
+            </p>
             <button
               onClick={() => void resetLoginRateLimit()}
               disabled={resetLoading}
               className="px-4 py-2 text-sm font-bold rounded-xl border-2 border-black dark:border-neutral-700 bg-white dark:bg-neutral-900 text-slate-900 dark:text-neutral-200 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-0.5 transition-all disabled:opacity-60"
             >
               {resetLoading ? 'Resetting…' : 'Reset'}
-            </button>
-            <button
-              onClick={() => void saveLoginRateLimitConfig()}
-              disabled={loginRateLimitSaving}
-              className="px-4 py-2 text-sm font-bold rounded-xl border-2 border-black dark:border-neutral-700 bg-indigo-600 text-white shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 transition-all disabled:opacity-60"
-            >
-              {loginRateLimitSaving ? 'Saving…' : 'Save'}
             </button>
           </div>
         </div>
@@ -716,6 +823,7 @@ export const Admin: React.FC = () => {
         }}
         onCancel={() => setResetPasswordResult(null)}
       />
+      <Toaster position="bottom-center" />
     </Layout>
   );
 };

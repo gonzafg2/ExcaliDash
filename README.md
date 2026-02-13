@@ -190,6 +190,46 @@ backend:
 In `oidc_enforced` mode, unauthenticated users are automatically redirected to `/api/auth/oidc/start`.
 Users are linked by `(issuer, sub)` first, then by verified email, and optionally auto-provisioned.
 
+### Local OIDC Test Stack (Docker + Keycloak)
+
+For local end-to-end OIDC testing, this repo includes:
+
+- Compose override: `docker-compose.oidc.local.yml`
+- Pre-seeded Keycloak realm/client/users: `ops/keycloak/realm-excalidash-local.json`
+
+Run:
+
+```bash
+# From repo root
+docker compose -f docker-compose.oidc.local.yml up -d --build
+```
+
+This local stack defaults to `AUTH_MODE=hybrid`.
+To force OIDC-only mode for testing:
+
+```bash
+AUTH_MODE=oidc_enforced docker compose -f docker-compose.oidc.local.yml up -d --build
+```
+
+Then open:
+
+- ExcaliDash: `http://localhost:16767`
+- Keycloak admin: `http://localhost:8081` (`admin` / `admin`)
+
+OIDC login test users (realm: `excalidash`):
+
+- `alice@example.com` / `Passw0rd!`
+- `bob@example.com` / `Passw0rd!`
+
+Stop/clean up:
+
+```bash
+docker compose -f docker-compose.oidc.local.yml down
+
+# Optional: remove database volume for a full reset
+docker compose -f docker-compose.oidc.local.yml down -v
+```
+
 # Development
 
 ## Clone the Repository

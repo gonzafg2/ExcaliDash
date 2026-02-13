@@ -11,7 +11,7 @@ import {
   updateEmailSchema,
   updateProfileSchema,
 } from "./schemas";
-import { getTokenLookupCandidates, hashTokenForStorage } from "./tokenSecurity";
+import { hashTokenForStorage } from "./tokenSecurity";
 
 type RegisterAccountRoutesDeps = {
   router: express.Router;
@@ -148,7 +148,7 @@ export const registerAccountRoutes = (deps: RegisterAccountRoutesDeps) => {
       const { token, password } = parsed.data;
       const resetToken = await prisma.passwordResetToken.findFirst({
         where: {
-          OR: getTokenLookupCandidates(token).map((candidate) => ({ token: candidate })),
+          token: hashTokenForStorage(token),
         },
         include: { user: true },
       });
@@ -385,7 +385,7 @@ export const registerAccountRoutes = (deps: RegisterAccountRoutesDeps) => {
         });
       }
 
-      return res.json({ user: updatedUser, accessToken, refreshToken });
+      return res.json({ user: updatedUser });
     } catch (error) {
       console.error("Update email error:", error);
       return res.status(500).json({
@@ -568,7 +568,7 @@ export const registerAccountRoutes = (deps: RegisterAccountRoutesDeps) => {
         });
       }
 
-      return res.json({ user: updatedUser, accessToken, refreshToken });
+      return res.json({ user: updatedUser });
     } catch (error) {
       console.error("Must reset password error:", error);
       return res.status(500).json({
