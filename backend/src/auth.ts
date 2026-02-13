@@ -329,6 +329,7 @@ export const createAuthRouter = (deps: CreateAuthRouterDeps): express.Router => 
   ) => {
     const signOptions: SignOptions = {
       expiresIn: config.jwtAccessExpiresIn as StringValue,
+      jwtid: crypto.randomUUID(),
     };
     const accessToken = jwt.sign(
       { userId, email, type: "access", impersonatorId: options?.impersonatorId },
@@ -338,6 +339,7 @@ export const createAuthRouter = (deps: CreateAuthRouterDeps): express.Router => 
 
     const refreshSignOptions: SignOptions = {
       expiresIn: config.jwtRefreshExpiresIn as StringValue,
+      jwtid: crypto.randomUUID(),
     };
     const refreshToken = jwt.sign(
       { userId, email, type: "refresh", impersonatorId: options?.impersonatorId },

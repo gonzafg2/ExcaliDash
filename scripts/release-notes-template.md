@@ -1,6 +1,6 @@
-# ExcaliDash v0.4.6
+# ExcaliDash {{TAG}}
 
-Release date: 2026-02-11
+Release date: {{DATE}}
 
 ## Highlights
 - 

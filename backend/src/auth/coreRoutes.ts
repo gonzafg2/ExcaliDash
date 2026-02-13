@@ -11,6 +11,10 @@ import {
   registerSchema,
 } from "./schemas";
 import { getTokenLookupCandidates, hashTokenForStorage } from "./tokenSecurity";
+import {
+  issueBootstrapSetupCodeIfRequired,
+  verifyBootstrapSetupCode,
+} from "./bootstrapSetupCode";
 
 type RegisterCoreRoutesDeps = {
   router: express.Router;
@@ -54,6 +58,8 @@ type RegisterCoreRoutesDeps = {
       enforced: boolean;
       providerName: string;
     };
+    bootstrapSetupCodeTtlMs: number;
+    bootstrapSetupCodeMaxAttempts: number;
   };
   generateTokens: (
     userId: string,
@@ -173,7 +179,7 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
         });
       }
 
-      const { email, password, name, username } = parsed.data;
+      const { email, password, name, username, setupCode } = parsed.data;
 
       const systemConfig = await ensureSystemConfig();
 
@@ -189,6 +195,52 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
         bootstrapUser.id === bootstrapUserId;
 
       if (isBootstrapFlow) {
+        const setupCodeVerification = await verifyBootstrapSetupCode({
+          prisma,
+          providedCode: setupCode,
+          maxAttempts: Math.max(1, Math.floor(config.bootstrapSetupCodeMaxAttempts)),
+        });
+        if (!setupCodeVerification.ok) {
+          const reason = (setupCodeVerification as { ok: false; reason: string }).reason;
+          if (
+            reason === "unavailable" ||
+            reason === "expired" ||
+            reason === "locked"
+          ) {
+            await issueBootstrapSetupCodeIfRequired({
+              prisma,
+              ttlMs: config.bootstrapSetupCodeTtlMs,
+              authMode: config.authMode,
+              reason: "bootstrap_register_reissue",
+            });
+          }
+
+          if (reason === "missing") {
+            return res.status(400).json({
+              error: "Bad request",
+              message: "Bootstrap setup code is required for first admin registration",
+            });
+          }
+          if (reason === "invalid") {
+            return res.status(401).json({
+              error: "Unauthorized",
+              message: "Invalid bootstrap setup code",
+            });
+          }
+          if (reason === "locked") {
+            return res.status(429).json({
+              error: "Too many requests",
+              message:
+                "Too many invalid setup code attempts. A new setup code has been issued in backend logs.",
+            });
+          }
+          return res.status(409).json({
+            error: "Conflict",
+            message:
+              "Bootstrap setup code is unavailable or expired. A new setup code has been issued in backend logs.",
+          });
+        }
+
         const saltRounds = 10;
         const passwordHash = await bcrypt.hash(password, saltRounds);
         const sanitizedName = sanitizeText(name, 100);
@@ -295,8 +347,6 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
             role: user.role,
             mustResetPassword: user.mustResetPassword,
           },
-          accessToken,
-          refreshToken,
           registrationEnabled: systemConfig.registrationEnabled,
           bootstrapped: true,
         });
@@ -411,8 +461,6 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
           role: user.role,
           mustResetPassword: user.mustResetPassword,
         },
-        accessToken,
-        refreshToken,
         registrationEnabled: systemConfig.registrationEnabled,
       });
     } catch (error) {
@@ -433,6 +481,7 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
           message: "Local login is disabled in OIDC enforced mode",
         });
       }
+      if (!requireCsrf(req, res)) return;
       const parsed = loginSchema.safeParse(req.body);
 
       if (!parsed.success) {
@@ -536,8 +585,6 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
           role: user.role,
           mustResetPassword: user.mustResetPassword,
         },
-        accessToken,
-        refreshToken,
       });
     } catch (error) {
       console.error("Login error:", error);
@@ -639,10 +686,7 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
               accessToken,
               refreshToken: newRefreshToken,
             });
-            return res.json({
-              accessToken,
-              refreshToken: newRefreshToken,
-            });
+            return res.json({ ok: true });
           } catch (error) {
             if (error instanceof HttpError) {
               return res.status(error.statusCode).json({
@@ -682,7 +726,7 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
         );
 
         setAccessTokenCookie(req, res, accessToken);
-        res.json({ accessToken });
+        res.json({ ok: true });
       } catch {
         return res.status(401).json({
           error: "Unauthorized",
@@ -796,8 +840,6 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
           role: impersonator.role,
           mustResetPassword: impersonator.mustResetPassword,
         },
-        accessToken,
-        refreshToken,
       });
     } catch (error) {
       console.error("Stop impersonation error:", error);
@@ -964,6 +1006,14 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
       });
 
       clearAuthEnabledCache();
+      if (nextAuthEnabled) {
+        await issueBootstrapSetupCodeIfRequired({
+          prisma,
+          ttlMs: config.bootstrapSetupCodeTtlMs,
+          authMode: config.authMode,
+          reason: "onboarding_enabled",
+        });
+      }
 
       return res.json({
         authEnabled: updated.authEnabled,
@@ -1042,6 +1092,14 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
         },
       });
       clearAuthEnabledCache();
+      if (!current && next) {
+        await issueBootstrapSetupCodeIfRequired({
+          prisma,
+          ttlMs: config.bootstrapSetupCodeTtlMs,
+          authMode: config.authMode,
+          reason: "auth_enabled_toggle",
+        });
+      }
 
       const bootstrapUser = await prisma.user.findUnique({
         where: { id: bootstrapUserId },

@@ -2,17 +2,21 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Logo } from '../components/Logo';
+import * as api from '../api';
 
 export const Register: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [setupCode, setSetupCode] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const {
     register,
     authEnabled,
+    oidcEnabled,
     oidcEnforced,
+    oidcProvider,
     bootstrapRequired,
     authOnboardingRequired,
     isAuthenticated,
@@ -27,7 +31,7 @@ export const Register: React.FC = () => {
       return;
     }
     if (oidcEnforced) {
-      navigate('/login', { replace: true });
+      api.startOidcSignIn('/');
       return;
     }
     if (!authEnabled) {
@@ -47,11 +51,15 @@ export const Register: React.FC = () => {
       setError('Password must be at least 8 characters long');
       return;
     }
+    if (bootstrapRequired && setupCode.trim().length === 0) {
+      setError('Bootstrap setup code is required');
+      return;
+    }
 
     setLoading(true);
 
     try {
-      await register(email, password, name);
+      await register(email, password, name, bootstrapRequired ? setupCode : undefined);
       navigate('/');
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to register';
@@ -59,6 +67,11 @@ export const Register: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleOidcBootstrap = () => {
+    setError('');
+    api.startOidcSignIn('/');
   };
 
   return (
@@ -71,7 +84,10 @@ export const Register: React.FC = () => {
           </h2>
           <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
             {bootstrapRequired ? (
-              <span>This will enable multi-user access for this ExcaliDash instance.</span>
+              <span>
+                Set up your first admin account to finish enabling multi-user access for this
+                ExcaliDash instance.
+              </span>
             ) : (
               <>
                 Or{' '}
@@ -84,6 +100,13 @@ export const Register: React.FC = () => {
               </>
             )}
           </p>
+          {bootstrapRequired && (
+            <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+              Get the one-time setup code from backend logs. Expected prefix: <code>[BOOTSTRAP SETUP]</code>. For Docker:{" "}
+              <code>docker compose logs backend --tail=200 | grep &quot;BOOTSTRAP SETUP&quot;</code> (or{" "}
+              <code>docker logs excalidash-backend --tail=200 | grep &quot;BOOTSTRAP SETUP&quot;</code>).
+            </p>
+          )}
         </div>
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           {error && (
@@ -91,6 +114,23 @@ export const Register: React.FC = () => {
               <div className="text-sm text-red-800 dark:text-red-200">{error}</div>
             </div>
           )}
+
+          {bootstrapRequired && oidcEnabled && !oidcEnforced && (
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={handleOidcBootstrap}
+                disabled={loading}
+                className="group relative w-full flex justify-center py-2 px-4 border border-gray-300 dark:border-gray-700 text-sm font-medium rounded-md text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Set up admin with {oidcProvider || 'OIDC'}
+              </button>
+              <div className="text-center text-xs text-gray-500 dark:text-gray-400">
+                Or create a local admin account below
+              </div>
+            </div>
+          )}
+
           <div className="rounded-md shadow-sm space-y-4">
             <div>
               <label htmlFor="name" className="sr-only">
@@ -141,6 +181,24 @@ export const Register: React.FC = () => {
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>
+            {bootstrapRequired && (
+              <div>
+                <label htmlFor="setupCode" className="sr-only">
+                  Bootstrap setup code
+                </label>
+                <input
+                  id="setupCode"
+                  name="setupCode"
+                  type="text"
+                  autoComplete="one-time-code"
+                  required
+                  className="appearance-none relative block w-full px-3 py-2 border border-amber-300 dark:border-amber-700 placeholder-amber-600 dark:placeholder-amber-300 text-gray-900 dark:text-white dark:bg-gray-800 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm uppercase tracking-widest"
+                  placeholder="One-time setup code"
+                  value={setupCode}
+                  onChange={(e) => setSetupCode(e.target.value.toUpperCase())}
+                />
+              </div>
+            )}
           </div>
 
           <div>

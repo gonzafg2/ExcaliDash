@@ -3,6 +3,7 @@ import request from "supertest";
 import { PrismaClient } from "../generated/client";
 import { getTestPrisma, setupTestDb } from "./testUtils";
 import { BOOTSTRAP_USER_ID } from "../auth/authMode";
+import { issueBootstrapSetupCodeIfRequired } from "../auth/bootstrapSetupCode";
 
 describe("Auth onboarding decision", () => {
   const userAgent = "vitest-auth-onboarding";
@@ -147,6 +148,15 @@ describe("Auth onboarding decision", () => {
     expect(noCsrfResponse.status).toBe(403);
     expect(noCsrfResponse.body?.error).toBe("CSRF token missing");
 
+    const issued = await issueBootstrapSetupCodeIfRequired({
+      prisma,
+      ttlMs: 15 * 60 * 1000,
+      authMode: "local",
+      reason: "bootstrap_register_reissue",
+    });
+    expect(issued.issued).toBe(true);
+    expect(issued.code).toBeTruthy();
+
     const bootstrapResponse = await agent
       .post("/auth/register")
       .set("User-Agent", userAgent)
@@ -155,10 +165,40 @@ describe("Auth onboarding decision", () => {
         email: "bootstrap-admin@test.local",
         password: "StrongPass1!",
         name: "Bootstrap Admin",
+        setupCode: issued.code,
       });
 
     expect(bootstrapResponse.status).toBe(201);
     expect(bootstrapResponse.body?.bootstrapped).toBe(true);
     expect(bootstrapResponse.body?.user?.email).toBe("bootstrap-admin@test.local");
+    expect(bootstrapResponse.body?.accessToken).toBeUndefined();
+    expect(bootstrapResponse.body?.refreshToken).toBeUndefined();
+  });
+
+  it("requires CSRF token for login and does not expose tokens in response body", async () => {
+    const noCsrfResponse = await agent
+      .post("/auth/login")
+      .set("User-Agent", userAgent)
+      .send({
+        email: "bootstrap-admin@test.local",
+        password: "StrongPass1!",
+      });
+
+    expect(noCsrfResponse.status).toBe(403);
+    expect(noCsrfResponse.body?.error).toBe("CSRF token missing");
+
+    const loginResponse = await agent
+      .post("/auth/login")
+      .set("User-Agent", userAgent)
+      .set(csrfHeaderName, csrfToken)
+      .send({
+        email: "bootstrap-admin@test.local",
+        password: "StrongPass1!",
+      });
+
+    expect(loginResponse.status).toBe(200);
+    expect(loginResponse.body?.user?.email).toBe("bootstrap-admin@test.local");
+    expect(loginResponse.body?.accessToken).toBeUndefined();
+    expect(loginResponse.body?.refreshToken).toBeUndefined();
   });
 });

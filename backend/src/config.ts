@@ -24,6 +24,8 @@ interface Config {
   enablePasswordReset: boolean;
   enableRefreshTokenRotation: boolean;
   enableAuditLogging: boolean;
+  bootstrapSetupCodeTtlMs: number;
+  bootstrapSetupCodeMaxAttempts: number;
 }
 
 export type AuthMode = "local" | "hybrid" | "oidc_enforced";
@@ -197,10 +199,12 @@ export const config: Config = {
   csrfMaxRequests: getRequiredEnvNumber("CSRF_MAX_REQUESTS", 60),
   csrfSecret: process.env.CSRF_SECRET || null,
   oidc: resolveOidcConfig(resolvedAuthMode),
-  // Feature flags - disabled by default for backward compatibility
+  // Feature flags
   enablePasswordReset: getOptionalBoolean("ENABLE_PASSWORD_RESET", false),
-  enableRefreshTokenRotation: getOptionalBoolean("ENABLE_REFRESH_TOKEN_ROTATION", false),
+  enableRefreshTokenRotation: getOptionalBoolean("ENABLE_REFRESH_TOKEN_ROTATION", true),
   enableAuditLogging: getOptionalBoolean("ENABLE_AUDIT_LOGGING", false),
+  bootstrapSetupCodeTtlMs: getRequiredEnvNumber("BOOTSTRAP_SETUP_CODE_TTL_MS", 15 * 60 * 1000),
+  bootstrapSetupCodeMaxAttempts: getRequiredEnvNumber("BOOTSTRAP_SETUP_CODE_MAX_ATTEMPTS", 10),
 };
 
 // Validate JWT_SECRET strength in production

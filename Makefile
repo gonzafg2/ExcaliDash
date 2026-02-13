@@ -3,7 +3,7 @@
 
 .PHONY: help install dev build test test-frontend test-backend test-e2e test-e2e-docker \
         lint lint-frontend lint-backend clean docker-build docker-run docker-down docker-logs \
-        release pre-release version-bump changelog db-migrate db-reset
+        release pre-release version-bump changelog changelog-open changelog-keep db-migrate db-reset
 
 # Colors
 GREEN  := \033[0;32m
@@ -62,13 +62,36 @@ install: ## Install all dependencies (frontend, backend, e2e)
 	cd e2e && npm install
 	@echo "$(GREEN)All dependencies installed!$(NC)"
 
-dev: ## Start development servers (frontend + backend)
-	@echo "$(YELLOW)Starting development servers...$(NC)"
-	@echo "$(BLUE)Backend will run on port 8000, Frontend on port 5173$(NC)"
-	@trap 'kill 0' INT; \
-		(cd backend && npm run dev) & \
-		(cd frontend && npm run dev) & \
-		wait
+dev: ## Start backend+frontend in a tmux split screen
+	@command -v tmux >/dev/null 2>&1 || { \
+		echo "$(RED)tmux is required for 'make dev'$(NC)"; \
+		echo "$(YELLOW)Install tmux and try again.$(NC)"; \
+		exit 1; \
+	}
+	@SESSION="excalidash-dev"; \
+	if tmux has-session -t $$SESSION 2>/dev/null; then \
+		echo "$(YELLOW)Using existing tmux session: $$SESSION$(NC)"; \
+	else \
+		echo "$(YELLOW)Creating tmux session: $$SESSION$(NC)"; \
+		tmux new-session -d -s $$SESSION -c "$(CURDIR)" "cd backend && npm run dev"; \
+		tmux split-window -h -t $$SESSION:0 -c "$(CURDIR)" "cd frontend && npm run dev"; \
+		tmux select-layout -t $$SESSION:0 even-horizontal; \
+		tmux select-pane -t $$SESSION:0.0; \
+	fi; \
+	if [ -n "$$TMUX" ]; then \
+		tmux switch-client -t $$SESSION; \
+	else \
+		tmux attach -t $$SESSION; \
+	fi
+
+dev-stop: ## Stop the tmux dev session
+	@SESSION="excalidash-dev"; \
+	if tmux has-session -t $$SESSION 2>/dev/null; then \
+		tmux kill-session -t $$SESSION; \
+		echo "$(GREEN)Stopped tmux session: $$SESSION$(NC)"; \
+	else \
+		echo "$(YELLOW)No tmux session named $$SESSION is running$(NC)"; \
+	fi
 
 dev-frontend: ## Start frontend dev server only
 	cd frontend && npm run dev
@@ -219,14 +242,36 @@ version-bump: ## Interactive version bump
 # RELEASE
 #===============================================================================
 
-changelog: ## Edit release notes (RELEASE.md)
-	@echo "$(YELLOW)Opening RELEASE.md for editing...$(NC)"
-	@if [ -z "$$EDITOR" ]; then \
-		echo "$(RED)No EDITOR set. Using vim.$(NC)"; \
-		vim RELEASE.md; \
+changelog: ## Reset RELEASE.md from template and open it for editing
+	@echo "$(YELLOW)Generating fresh RELEASE.md...$(NC)"
+	@if [ "$(PRERELEASE)" = "1" ]; then \
+		node scripts/reset-release-notes.cjs --prerelease; \
 	else \
-		$$EDITOR RELEASE.md; \
+		node scripts/reset-release-notes.cjs; \
 	fi
+	@$(MAKE) changelog-open
+
+changelog-open: ## Open current RELEASE.md without resetting
+	@echo "$(YELLOW)Opening RELEASE.md for editing...$(NC)"
+	@if [ -n "$$EDITOR" ]; then \
+		$$EDITOR RELEASE.md; \
+	elif command -v code >/dev/null 2>&1; then \
+		code --wait RELEASE.md; \
+	elif command -v open >/dev/null 2>&1; then \
+		open RELEASE.md; \
+		echo "$(YELLOW)Edit RELEASE.md in your GUI editor, then press Enter to continue...$(NC)"; \
+		read _; \
+	elif command -v xdg-open >/dev/null 2>&1; then \
+		xdg-open RELEASE.md; \
+		echo "$(YELLOW)Edit RELEASE.md in your GUI editor, then press Enter to continue...$(NC)"; \
+		read _; \
+	else \
+		echo "$(RED)No GUI opener found. Falling back to vi.$(NC)"; \
+		vi RELEASE.md; \
+	fi
+
+changelog-keep: ## Alias: open current RELEASE.md without resetting
+	@$(MAKE) changelog-open
 
 release: ## Full release workflow (main branch only)
 	@echo "$(GREEN)===========================================$(NC)"
@@ -293,11 +338,8 @@ release: ## Full release workflow (main branch only)
 	fi
 	@echo ""
 	@# Release notes
-	@echo "$(YELLOW)Release notes (RELEASE.md):$(NC)"
-	@read -p "Edit RELEASE.md now? [Y/n]: " edit; \
-	if [ "$$edit" != "n" ] && [ "$$edit" != "N" ]; then \
-		$(MAKE) changelog; \
-	fi
+	@echo "$(YELLOW)Preparing fresh release notes (RELEASE.md)...$(NC)"
+	@$(MAKE) changelog
 	@echo ""
 	@# Show summary before commit
 	@NEW_VERSION=$$(cat VERSION); \
@@ -430,11 +472,8 @@ pre-release: ## Pre-release workflow (pre-release branch only)
 	fi
 	@echo ""
 	@# Release notes
-	@echo "$(YELLOW)Release notes (RELEASE.md):$(NC)"
-	@read -p "Edit RELEASE.md now? [Y/n]: " edit; \
-	if [ "$$edit" != "n" ] && [ "$$edit" != "N" ]; then \
-		$(MAKE) changelog; \
-	fi
+	@echo "$(YELLOW)Preparing fresh pre-release notes (RELEASE.md)...$(NC)"
+	@$(MAKE) changelog PRERELEASE=1
 	@echo ""
 	@# Show summary before commit
 	@NEW_VERSION=$$(cat VERSION); \

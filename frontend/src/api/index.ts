@@ -112,17 +112,16 @@ export const authMe = async (): Promise<{ user: AuthUser }> => {
 
 export const authRefresh = async (
   refreshToken?: string
-): Promise<{ accessToken: string; refreshToken?: string }> => {
+): Promise<void> => {
   const body =
     typeof refreshToken === "string" && refreshToken.trim().length > 0
       ? { refreshToken }
       : {};
-  const response = await axios.post<{ accessToken: string; refreshToken?: string }>(
+  await axios.post<{ ok?: boolean }>(
     `${API_URL}/auth/refresh`,
     body,
     { withCredentials: true }
   );
-  return response.data;
 };
 
 export const authLogout = async (): Promise<void> => {
@@ -132,23 +131,28 @@ export const authLogout = async (): Promise<void> => {
 export const authLogin = async (
   email: string,
   password: string
-): Promise<{ user: AuthUser; accessToken: string; refreshToken: string }> => {
-  const response = await axios.post<{ user: AuthUser; accessToken: string; refreshToken: string }>(
-    `${API_URL}/auth/login`,
-    { email, password },
-    { withCredentials: true }
-  );
+): Promise<{ user: AuthUser }> => {
+  const response = await api.post<{ user: AuthUser }>('/auth/login', { email, password });
   return response.data;
 };
 
 export const authRegister = async (
   email: string,
   password: string,
-  name: string
-): Promise<{ user: AuthUser; accessToken: string; refreshToken: string }> => {
-  const response = await api.post<{ user: AuthUser; accessToken: string; refreshToken: string }>(
+  name: string,
+  setupCode?: string
+): Promise<{ user: AuthUser }> => {
+  const payload: { email: string; password: string; name: string; setupCode?: string } = {
+    email,
+    password,
+    name,
+  };
+  if (typeof setupCode === "string" && setupCode.trim().length > 0) {
+    payload.setupCode = setupCode.trim();
+  }
+  const response = await api.post<{ user: AuthUser }>(
     "/auth/register",
-    { email, password, name }
+    payload
   );
   return response.data;
 };
@@ -232,19 +236,12 @@ const redirectToLogin = async () => {
   }
 };
 
-let refreshPromise: Promise<string> | null = null;
+let refreshPromise: Promise<void> | null = null;
 
-const refreshAccessToken = async (): Promise<string> => {
+const refreshAccessToken = async (): Promise<void> => {
   if (!refreshPromise) {
     refreshPromise = (async () => {
-      const refreshResponse = await authRefresh();
-
-      const nextAccessToken = String(refreshResponse.accessToken || "");
-      if (!nextAccessToken) {
-        throw new Error("Missing access token in refresh response");
-      }
-
-      return nextAccessToken;
+      await authRefresh();
     })().finally(() => {
       refreshPromise = null;
     });
@@ -258,7 +255,6 @@ api.interceptors.request.use(
   async (config) => {
     // Auth endpoints that don't require authentication (login, register, etc.)
     const publicAuthEndpoints = [
-      '/auth/login',
       '/auth/refresh',
       '/auth/password-reset-request',
       '/auth/password-reset-confirm',
