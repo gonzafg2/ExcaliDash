@@ -1,7 +1,7 @@
-# ExcaliDash v0.4.7-dev
+# ExcaliDash v0.4.8-dev
 
 Release date: 2026-02-17
 
 ## Highlights
 
-- RC for 0.4
+- standardize password requirements in dev/prod mode
