@@ -3,6 +3,9 @@ set -e
 
 JWT_SECRET_FILE="/app/prisma/.jwt_secret"
 CSRF_SECRET_FILE="/app/prisma/.csrf_secret"
+MIGRATION_LOCK_DIR="/app/prisma/.migration-lock"
+MIGRATION_LOCK_TIMEOUT_SECONDS="${MIGRATION_LOCK_TIMEOUT_SECONDS:-120}"
+RUN_MIGRATIONS="${RUN_MIGRATIONS:-true}"
 
 # Ensure JWT secret exists for production startup.
 # Backward compatibility: older installs may not have JWT_SECRET configured.
@@ -74,8 +77,34 @@ if [ -f "/app/prisma/dev.db" ]; then
 fi
 
 # 3. Run Migrations (Drop privileges to nodejs)
-echo "Running database migrations..."
-su-exec nodejs npx prisma migrate deploy
+# SQLite + multi-replica note:
+# - Running migrations concurrently against the same SQLite file can fail.
+# - This lock coordinates startup when multiple containers share the same volume.
+# - For Kubernetes, the safest pattern is still: run migrations once via a Job/init container
+#   and set RUN_MIGRATIONS=false on the main deployment.
+if [ "${RUN_MIGRATIONS}" = "true" ] || [ "${RUN_MIGRATIONS}" = "1" ]; then
+    echo "Running database migrations..."
+
+    lock_waited=0
+    while ! mkdir "${MIGRATION_LOCK_DIR}" 2>/dev/null; do
+        if [ "${lock_waited}" -ge "${MIGRATION_LOCK_TIMEOUT_SECONDS}" ]; then
+            echo "Timed out waiting for migration lock after ${MIGRATION_LOCK_TIMEOUT_SECONDS}s"
+            exit 1
+        fi
+        lock_waited=$((lock_waited + 1))
+        sleep 1
+    done
+
+    # Best-effort cleanup so future startups don't block forever.
+    trap 'rmdir "${MIGRATION_LOCK_DIR}" 2>/dev/null || true' EXIT INT TERM
+
+    su-exec nodejs npx prisma migrate deploy
+
+    rmdir "${MIGRATION_LOCK_DIR}" 2>/dev/null || true
+    trap - EXIT INT TERM
+else
+    echo "Skipping database migrations (RUN_MIGRATIONS=${RUN_MIGRATIONS})"
+fi
 
 # 4. Start Application (Drop privileges to nodejs)
 echo "Starting application as nodejs..."
