@@ -1,6 +1,8 @@
 export interface ElementVersionInfo {
   version: number;
   versionNonce: number;
+  updated: number;
+  contentSig: string;
 }
 
 export const haveSameElements = (a: readonly any[] = [], b: readonly any[] = []) => {
@@ -13,6 +15,12 @@ export const haveSameElements = (a: readonly any[] = [], b: readonly any[] = [])
     if (left.id !== right.id) return false;
     if ((left.version ?? 0) !== (right.version ?? 0)) return false;
     if ((left.versionNonce ?? 0) !== (right.versionNonce ?? 0)) return false;
+    // Some Excalidraw interactions (notably drag/resize) can update geometry while
+    // keeping version/versionNonce stable until commit; `updated` catches those frames.
+    const leftUpdated = typeof left.updated === "number" ? left.updated : Number(left.updated) || 0;
+    const rightUpdated =
+      typeof right.updated === "number" ? right.updated : Number(right.updated) || 0;
+    if (leftUpdated !== rightUpdated) return false;
   }
   return true;
 };

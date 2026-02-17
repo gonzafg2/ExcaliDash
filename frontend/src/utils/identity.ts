@@ -1,3 +1,5 @@
+import { getInitialsFromName } from "./user";
+
 export interface UserIdentity {
   id: string;
   name: string;
@@ -172,14 +174,14 @@ export const getUserIdentity = (): UserIdentity => {
         typeof parsed.name === "string" &&
         typeof parsed.color === "string"
       ) {
+        // Always derive initials from the display name so the badge matches what
+        // the server will compute for presence (and to avoid LO vs Scourge-style mismatches).
+        const normalizedInitials = getInitialsFromName(parsed.name);
         const normalized: UserIdentity = {
           id: parsed.id,
           name: parsed.name,
           color: parsed.color,
-          initials:
-            typeof parsed.initials === "string" && parsed.initials.length === 2
-              ? parsed.initials
-              : getFingerprintInitials(parsed.id),
+          initials: normalizedInitials,
         };
         localStorage.setItem("excalidash-user-id", JSON.stringify(normalized));
         return normalized;
@@ -189,14 +191,18 @@ export const getUserIdentity = (): UserIdentity => {
   }
 
   const deviceId = getOrCreateBrowserFingerprint();
-  const randomTransformer = TRANSFORMERS[getSecureRandomInt(TRANSFORMERS.length)];
-  const randomColor = COLORS[getSecureRandomInt(COLORS.length)];
+  // Deterministic guest identity derived from the device fingerprint.
+  // This keeps the "guest name" stable and consistent even if excalidash-user-id
+  // is cleared, and ensures initials always match the display name.
+  const hash = hashString(deviceId);
+  const transformer = TRANSFORMERS[hash % TRANSFORMERS.length];
+  const color = COLORS[Math.floor(hash / TRANSFORMERS.length) % COLORS.length];
 
   const identity: UserIdentity = {
     id: deviceId,
-    name: randomTransformer.name,
-    initials: getFingerprintInitials(deviceId),
-    color: randomColor,
+    name: transformer.name,
+    initials: getInitialsFromName(transformer.name),
+    color,
   };
 
   localStorage.setItem("excalidash-user-id", JSON.stringify(identity));

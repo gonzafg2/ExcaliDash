@@ -4,6 +4,15 @@ import { PrismaClient } from "../generated/client";
 import { AuthModeService } from "../auth/authMode";
 import { ACCESS_TOKEN_COOKIE_NAME, parseCookieHeader } from "../auth/cookies";
 import { BOOTSTRAP_USER_ID } from "../auth/authMode";
+import {
+  SHARE_SESSION_COOKIE_NAME,
+  parseShareSessionToken,
+  normalizeDrawingPermission,
+  getDrawingAccess,
+  canEditDrawing,
+  canViewDrawing,
+  type DrawingPrincipal,
+} from "../authz/sharing";
 
 interface User {
   id: string;
@@ -28,7 +37,7 @@ export const registerSocketHandlers = ({
   jwtSecret,
 }: RegisterSocketHandlersDeps) => {
   const roomUsers = new Map<string, User[]>();
-  const socketUserMap = new Map<string, string>();
+  const socketPrincipalMap = new Map<string, DrawingPrincipal>();
 
   const toPresenceName = (value: unknown): string => {
     if (typeof value !== "string") return "User";
@@ -37,15 +46,14 @@ export const registerSocketHandlers = ({
   };
 
   const toPresenceInitials = (name: string): string => {
-    const words = name
-      .split(/\s+/)
-      .map((part) => part.trim())
-      .filter((part) => part.length > 0);
-    if (words.length === 0) return "U";
-    const first = words[0]?.[0] ?? "";
-    const second = words.length > 1 ? words[1]?.[0] ?? "" : "";
-    const initials = `${first}${second}`.toUpperCase().slice(0, 2);
-    return initials.length > 0 ? initials : "U";
+    // Keep consistent with frontend `getInitialsFromName`.
+    const trimmed = name.trim();
+    if (!trimmed) return "U";
+    const parts = trimmed.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) {
+      return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+    }
+    return trimmed.slice(0, 2).toUpperCase();
   };
 
   const toPresenceColor = (value: unknown): string => {
@@ -87,6 +95,27 @@ export const registerSocketHandlers = ({
     }
   };
 
+  const getSocketSharePrincipal = async (cookieHeader: string | undefined): Promise<DrawingPrincipal | null> => {
+    if (!cookieHeader) return null;
+    const cookies = parseCookieHeader(cookieHeader);
+    const token = cookies[SHARE_SESSION_COOKIE_NAME];
+    if (!token || token.trim().length === 0) return null;
+    const parsed = parseShareSessionToken(token, jwtSecret);
+    if (!parsed) return null;
+
+    const share = await prisma.drawingLinkShare.findUnique({
+      where: { id: parsed.shareId },
+      select: { id: true, drawingId: true, permission: true, revokedAt: true, expiresAt: true },
+    });
+    if (!share || share.revokedAt) return null;
+    if (share.drawingId !== parsed.drawingId) return null;
+    if (share.expiresAt && share.expiresAt.getTime() <= Date.now()) return null;
+    const permission = normalizeDrawingPermission(share.permission);
+    if (!permission || permission !== parsed.permission) return null;
+
+    return { kind: "share", shareId: share.id, drawingId: share.drawingId, permission };
+  };
+
   io.use(async (socket, next) => {
     try {
       const tokenFromAuth = socket.handshake.auth?.token as string | undefined;
@@ -96,48 +125,63 @@ export const registerSocketHandlers = ({
         return typeof value === "string" && value.trim().length > 0 ? value : undefined;
       })();
       const token = tokenFromAuth || tokenFromCookie;
+      const authEnabled = await authModeService.getAuthEnabled();
       const userId = await getSocketAuthUserId(token);
 
-      if (!userId) {
-        return next(new Error("Authentication required"));
+      if (userId) {
+        socketPrincipalMap.set(socket.id, { kind: "user", userId });
+        return next();
       }
 
-      socketUserMap.set(socket.id, userId);
-      next();
+      // Allow unauthenticated share-session principals when auth is enabled.
+      if (authEnabled) {
+        const sharePrincipal = await getSocketSharePrincipal(socket.handshake.headers.cookie);
+        if (sharePrincipal) {
+          socketPrincipalMap.set(socket.id, sharePrincipal);
+          return next();
+        }
+
+        // Google-Docs-style "anyone with the link": allow anonymous sockets and enforce access on join-room
+        // using getDrawingAccess (which now consults active link-share policies).
+        return next();
+      }
+
+      return next(new Error("Authentication required"));
     } catch {
       next(new Error("Authentication failed"));
     }
   });
 
   io.on("connection", (socket) => {
-    const authenticatedUserId = socketUserMap.get(socket.id);
-    const authorizedDrawingIds = new Set<string>();
+    const principal = socketPrincipalMap.get(socket.id) || null;
+    const authorizedDrawingAccess = new Map<string, "view" | "edit" | "owner">();
 
     socket.on(
       "join-room",
-      async ({
-        drawingId,
-        user,
-      }: {
-        drawingId: string;
-        user: Omit<User, "socketId" | "isActive">;
-      }) => {
+      async (
+        {
+          drawingId,
+          user,
+        }: {
+          drawingId: string;
+          user: Omit<User, "socketId" | "isActive">;
+        },
+        ack?: (payload: { user: Omit<User, "socketId" | "isActive"> }) => void
+      ) => {
         try {
-          if (authenticatedUserId) {
-            const drawing = await prisma.drawing.findFirst({
-              where: { id: drawingId, userId: authenticatedUserId },
-              select: { id: true },
-            });
-
-            if (!drawing) {
-              socket.emit("error", { message: "You do not have access to this drawing" });
-              return;
-            }
+          const access = await getDrawingAccess({
+            prisma,
+            principal,
+            drawingId,
+          });
+          if (!canViewDrawing(access)) {
+            socket.emit("error", { message: "You do not have access to this drawing" });
+            return;
           }
 
           const roomId = `drawing_${drawingId}`;
           socket.join(roomId);
-          authorizedDrawingIds.add(drawingId);
+          authorizedDrawingAccess.set(drawingId, access === "owner" ? "owner" : access);
 
           let trustedUserId =
             typeof user?.id === "string" && user.id.trim().length > 0
@@ -145,9 +189,13 @@ export const registerSocketHandlers = ({
               : socket.id;
           let trustedName = toPresenceName(user?.name);
 
-          if (authenticatedUserId && authenticatedUserId !== BOOTSTRAP_USER_ID) {
+          if (!principal || principal.kind === "share") {
+            // Never trust client-provided ids for anonymous/share-link sessions; prevent spoofing/collisions.
+            const prefix = principal?.kind === "share" ? `share:${principal.shareId}` : "anon";
+            trustedUserId = `${prefix}:${socket.id}`.slice(0, 200);
+          } else if (principal?.kind === "user" && principal.userId !== BOOTSTRAP_USER_ID) {
             const account = await prisma.user.findUnique({
-              where: { id: authenticatedUserId },
+              where: { id: principal.userId },
               select: { id: true, name: true },
             });
             if (account) {
@@ -171,6 +219,17 @@ export const registerSocketHandlers = ({
           roomUsers.set(roomId, filteredUsers);
 
           io.to(roomId).emit("presence-update", filteredUsers);
+          // Let the client know what the server will use as its canonical presence identity.
+          if (typeof ack === "function") {
+            ack({
+              user: {
+                id: newUser.id,
+                name: newUser.name,
+                initials: newUser.initials,
+                color: newUser.color,
+              },
+            });
+          }
         } catch (err) {
           console.error("Error in join-room handler:", err);
           socket.emit("error", { message: "Failed to join room" });
@@ -180,18 +239,38 @@ export const registerSocketHandlers = ({
 
     socket.on("cursor-move", (data) => {
       const drawingId = typeof data?.drawingId === "string" ? data.drawingId : null;
-      if (!drawingId || !authorizedDrawingIds.has(drawingId)) {
+      if (!drawingId || !authorizedDrawingAccess.has(drawingId)) {
         return;
       }
       const roomId = `drawing_${drawingId}`;
-      socket.volatile.to(roomId).emit("cursor-move", data);
+      // Don't trust client-provided identity fields; use the server-side presence user.
+      const users = roomUsers.get(roomId) || [];
+      const self = users.find((u) => u.socketId === socket.id);
+      if (!self) return;
+      socket.volatile.to(roomId).emit("cursor-move", {
+        ...data,
+        drawingId,
+        userId: self.id,
+        username: self.name,
+        color: self.color,
+      });
     });
 
-    socket.on("element-update", (data) => {
+    socket.on("element-update", async (data) => {
       const drawingId = typeof data?.drawingId === "string" ? data.drawingId : null;
-      if (!drawingId || !authorizedDrawingIds.has(drawingId)) {
+      if (!drawingId || !authorizedDrawingAccess.has(drawingId)) {
         return;
       }
+
+      // Enforce edit permission for every mutation event.
+      // We rely on the access computed during join-room to avoid any mismatch between the
+      // socket principal and follow-up DB lookups (and to keep this handler fast).
+      const joinedAccess = authorizedDrawingAccess.get(drawingId) ?? "none";
+      if (!canEditDrawing(joinedAccess)) {
+        socket.emit("error", { message: "Read-only access: cannot edit this drawing" });
+        return;
+      }
+
       const roomId = `drawing_${drawingId}`;
       socket.to(roomId).emit("element-update", data);
     });
@@ -199,7 +278,7 @@ export const registerSocketHandlers = ({
     socket.on(
       "user-activity",
       ({ drawingId, isActive }: { drawingId: string; isActive: boolean }) => {
-        if (!authorizedDrawingIds.has(drawingId)) {
+        if (!authorizedDrawingAccess.has(drawingId)) {
           return;
         }
         const roomId = `drawing_${drawingId}`;
@@ -215,7 +294,7 @@ export const registerSocketHandlers = ({
     );
 
     socket.on("disconnect", () => {
-      socketUserMap.delete(socket.id);
+      socketPrincipalMap.delete(socket.id);
       roomUsers.forEach((users, roomId) => {
         const index = users.findIndex((u) => u.socketId === socket.id);
         if (index !== -1) {

@@ -115,7 +115,10 @@ export const sanitizePathSegment = (input: string, fallback: string): string => 
     .replace(/\s+/g, " ")
     .slice(0, 120)
     .trim();
-  return cleaned.length > 0 ? cleaned : fallback;
+  const withoutLeadingDots = cleaned.replace(/^\.+/, "").trim();
+  if (withoutLeadingDots.length === 0) return fallback;
+  if (withoutLeadingDots === "." || withoutLeadingDots === "..") return fallback;
+  return withoutLeadingDots;
 };
 
 export const makeUniqueName = (base: string, used: Set<string>): string => {

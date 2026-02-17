@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Download, Loader2, ChevronUp, ChevronDown } from 'lucide-react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { ArrowLeft, Download, Loader2, ChevronUp, ChevronDown, Share2 } from 'lucide-react';
 import clsx from 'clsx';
 import { Excalidraw, exportToSvg } from '@excalidraw/excalidraw';
 import debounce from 'lodash/debounce';
@@ -9,7 +9,7 @@ import { Toaster, toast } from 'sonner';
 import { io, Socket } from 'socket.io-client';
 import type { UserIdentity } from '../utils/identity';
 import { useAuth } from '../context/AuthContext';
-import { reconcileElements } from '../utils/sync';
+import { applyElementOrder, reconcileElements } from '../utils/sync';
 import { exportFromEditor } from '../utils/exportUtils';
 import * as api from '../api';
 import { useTheme } from '../context/ThemeContext';
@@ -25,10 +25,48 @@ import {
 import type { ElementVersionInfo } from './editor/shared';
 import { useEditorChrome } from './editor/useEditorChrome';
 import { useEditorIdentity } from './editor/useEditorIdentity';
+import { ShareModal } from '../components/ShareModal';
 
 interface Peer extends UserIdentity {
   isActive: boolean;
 }
+
+const toFiniteNumber = (value: any): number => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+};
+
+// Content-based signature for detecting "live" changes even when Excalidraw doesn't
+// bump version/versionNonce/updated until commit (e.g. during shape creation drags).
+const getElementContentSig = (element: any): string => {
+  if (!element || typeof element !== "object") return "";
+
+  const type = typeof element.type === "string" ? element.type : "";
+  const isDeleted = element.isDeleted ? "1" : "0";
+  const status = typeof element.status === "string" ? element.status : "";
+  const x = toFiniteNumber(element.x);
+  const y = toFiniteNumber(element.y);
+  const w = toFiniteNumber(element.width);
+  const h = toFiniteNumber(element.height);
+  const angle = toFiniteNumber(element.angle);
+
+  const fileId = typeof element.fileId === "string" ? element.fileId : "";
+  const text = typeof element.text === "string" ? element.text : "";
+  const textSig = text ? `t${text.length}:${text.slice(0, 64)}` : "";
+
+  let pointsSig = "";
+  if (Array.isArray(element.points)) {
+    const pts = element.points as any[];
+    const len = pts.length;
+    const last = len > 0 ? pts[len - 1] : null;
+    const lastX = Array.isArray(last) ? toFiniteNumber(last[0]) : 0;
+    const lastY = Array.isArray(last) ? toFiniteNumber(last[1]) : 0;
+    pointsSig = `p${len}:${lastX},${lastY}`;
+  }
+
+  return `${type}|${isDeleted}|${status}|${x}|${y}|${w}|${h}|${angle}|${pointsSig}|${fileId}|${textSig}`;
+};
 
 class DrawingSaveConflictError extends Error {
   constructor(message = "Drawing version conflict") {
@@ -40,8 +78,22 @@ class DrawingSaveConflictError extends Error {
 export const Editor: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { theme } = useTheme();
   const { user } = useAuth();
+  const autoHideStorageKey = id ? `excalidash:editor:${id}:autoHideEnabled` : null;
+  const getStoredAutoHideEnabled = useCallback((): boolean => {
+    if (!autoHideStorageKey) return true;
+    try {
+      const raw = window.localStorage.getItem(autoHideStorageKey);
+      if (raw === null) return true;
+      return raw === "1" || raw === "true";
+    } catch {
+      return true;
+    }
+  }, [autoHideStorageKey]);
+  const [accessLevel, setAccessLevel] = useState<"none" | "view" | "edit" | "owner">("owner");
+  const canEdit = accessLevel === "edit" || accessLevel === "owner";
   const [drawingName, setDrawingName] = useState('Drawing Editor');
   const [isRenaming, setIsRenaming] = useState(false);
   const [newName, setNewName] = useState('');
@@ -49,13 +101,27 @@ export const Editor: React.FC = () => {
   const [isSceneLoading, setIsSceneLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isSavingOnLeave, setIsSavingOnLeave] = useState(false);
-  const [autoHideEnabled, setAutoHideEnabled] = useState(true);
+  const [autoHideEnabled, setAutoHideEnabled] = useState(getStoredAutoHideEnabled);
+  const [isShareOpen, setIsShareOpen] = useState(false);
   const { isHeaderVisible, setIsHeaderVisible } = useEditorChrome({
     drawingName,
     autoHideEnabled,
     isRenaming,
   });
   const me: UserIdentity = useEditorIdentity(user);
+  // The server can override the identity id (notably for share-link sessions) to prevent spoofing.
+  // Keep a "socket identity" in sync with what the server considers canonical, so we don't render ourselves twice.
+  const [socketMe, setSocketMe] = useState<UserIdentity>(me);
+  const socketMeRef = useRef<UserIdentity>(socketMe);
+  const lastPresenceUsersRef = useRef<Peer[] | null>(null);
+
+  useEffect(() => {
+    setSocketMe(me);
+  }, [me.id, me.name, me.initials, me.color]);
+
+  useEffect(() => {
+    socketMeRef.current = socketMe;
+  }, [socketMe]);
 
   const [peers, setPeers] = useState<Peer[]>([]);
   const [isReady, setIsReady] = useState(false);
@@ -72,6 +138,8 @@ export const Editor: React.FC = () => {
   const initialSceneElementsRef = useRef<readonly any[]>([]);
   const latestFilesRef = useRef<any>(null);
   const lastSyncedFilesRef = useRef<Record<string, any>>({});
+  const lastSyncedElementOrderSigRef = useRef<string>("");
+  const lastPersistedFilesRef = useRef<Record<string, any>>({});
   const latestAppStateRef = useRef<any>(null);
   const debouncedSaveRef = useRef<((drawingId: string, elements: readonly any[], appState: any, files?: Record<string, any>) => void) | null>(null);
   const currentDrawingVersionRef = useRef<number | null>(null);
@@ -80,6 +148,15 @@ export const Editor: React.FC = () => {
   const patchedAddFilesApisRef = useRef<WeakSet<object>>(new WeakSet());
   const suspiciousBlankLoadRef = useRef(false);
   const hasSceneChangesSinceLoadRef = useRef(false);
+  const pendingRemoteElementsRef = useRef<Map<string, any>>(new Map());
+  const pendingRemoteFilesRef = useRef<Record<string, any>>({});
+  const pendingRemoteElementOrderRef = useRef<string[] | null>(null);
+  const remoteFlushScheduledRef = useRef(false);
+  const remoteFlushRafIdRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    setAutoHideEnabled(getStoredAutoHideEnabled());
+  }, [getStoredAutoHideEnabled]);
 
   const getRenderableBaselineSnapshot = useCallback((): readonly any[] => {
     if (hasRenderableElements(lastPersistedElementsRef.current)) {
@@ -217,18 +294,23 @@ export const Editor: React.FC = () => {
         drawingId: id,
         elements: [],
         files: filesDelta,
-        userId: me.id,
+        userId: socketMeRef.current.id,
       });
 
       return true;
     },
-    [id, me.id]
+    [id]
   );
 
   const recordElementVersion = useCallback((element: any) => {
     elementVersionMap.current.set(element.id, {
       version: element.version ?? 0,
       versionNonce: element.versionNonce ?? 0,
+      updated:
+        typeof element?.updated === "number"
+          ? element.updated
+          : Number(element?.updated) || 0,
+      contentSig: getElementContentSig(element),
     });
   }, []);
 
@@ -238,8 +320,38 @@ export const Editor: React.FC = () => {
 
     const nextVersion = element.version ?? 0;
     const nextNonce = element.versionNonce ?? 0;
+    const nextUpdated =
+      typeof element?.updated === "number"
+        ? element.updated
+        : Number(element?.updated) || 0;
+    const nextSig = getElementContentSig(element);
 
-    return previous.version !== nextVersion || previous.versionNonce !== nextNonce;
+    return (
+      previous.version !== nextVersion ||
+      previous.versionNonce !== nextNonce ||
+      previous.updated !== nextUpdated ||
+      previous.contentSig !== nextSig
+    );
+  }, []);
+
+  const computeElementOrderSig = useCallback((elements: readonly any[]) => {
+    // Hash element ID order so we can detect layer reorder operations that don't
+    // bump element version fields.
+    let hash = 2166136261; // FNV-1a 32-bit offset basis
+    let count = 0;
+    for (const el of elements) {
+      const id = typeof el?.id === "string" ? el.id : "";
+      if (!id) continue;
+      count += 1;
+      for (let i = 0; i < id.length; i++) {
+        hash ^= id.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+      }
+      // Delimiter so ["ab","c"] != ["a","bc"]
+      hash ^= 124; // '|'
+      hash = Math.imul(hash, 16777619);
+    }
+    return `${count}:${(hash >>> 0).toString(16)}`;
   }, []);
 
   useEffect(() => {
@@ -275,7 +387,22 @@ export const Editor: React.FC = () => {
       });
     }
 
-    socket.emit('join-room', { drawingId: id, user: me });
+    socket.emit('join-room', { drawingId: id, user: me }, (payload: any) => {
+      const serverUser = payload?.user;
+      if (!serverUser || typeof serverUser.id !== "string") return;
+      const next: UserIdentity = {
+        id: serverUser.id,
+        name: typeof serverUser.name === "string" ? serverUser.name : me.name,
+        initials: typeof serverUser.initials === "string" ? serverUser.initials : me.initials,
+        color: typeof serverUser.color === "string" ? serverUser.color : me.color,
+      };
+      socketMeRef.current = next;
+      setSocketMe(next);
+      const lastUsers = lastPresenceUsersRef.current;
+      if (lastUsers) {
+        setPeers(lastUsers.filter((u) => u.id !== next.id));
+      }
+    });
 
     const renderLoop = () => {
       if (cursorBuffer.current.size > 0 && excalidrawAPI.current) {
@@ -293,17 +420,36 @@ export const Editor: React.FC = () => {
     renderLoop();
 
     socket.on('presence-update', (users: Peer[]) => {
-      setPeers(users.filter(u => u.id !== me.id));
+      lastPresenceUsersRef.current = users;
+      const selfId = socketMeRef.current.id;
+      setPeers(users.filter(u => u.id !== selfId));
 
       if (excalidrawAPI.current) {
         const collaborators = new Map(excalidrawAPI.current.getAppState().collaborators || []);
         users.forEach(user => {
-          if (!user.isActive && user.id !== me.id) {
+          if (!user.isActive && user.id !== selfId) {
             collaborators.delete(user.id);
           }
         });
         excalidrawAPI.current.updateScene({ collaborators });
       }
+    });
+
+    socket.on("error", (payload: any) => {
+      const message = typeof payload?.message === "string" ? payload.message : null;
+      console.warn("[Editor] Socket error:", payload);
+      // If someone opens a link-shared drawing via the normal editor URL while signed in,
+      // backend policy may still allow access via the public editor route (`/shared/:id`).
+      // Prefer redirecting over showing a hard denial.
+      if (
+        message === "You do not have access to this drawing" &&
+        id &&
+        location.pathname.startsWith("/editor/")
+      ) {
+        navigate(`/shared/${id}${location.search}${location.hash}`, { replace: true });
+        return;
+      }
+      if (message) toast.error(message);
     });
 
     socket.on('cursor-move', (data: any) => {
@@ -317,43 +463,135 @@ export const Editor: React.FC = () => {
       });
     });
 
-    socket.on('element-update', ({ elements, files }: { elements: any[]; files?: Record<string, any> }) => {
+    const flushRemoteUpdates = () => {
+      remoteFlushScheduledRef.current = false;
+      remoteFlushRafIdRef.current = null;
       if (!excalidrawAPI.current) return;
 
+      const hasPendingElements = pendingRemoteElementsRef.current.size > 0;
+      const hasPendingFiles = Object.keys(pendingRemoteFilesRef.current || {}).length > 0;
+      const hasPendingOrder =
+        Array.isArray(pendingRemoteElementOrderRef.current) &&
+        pendingRemoteElementOrderRef.current.length > 0;
+      if (!hasPendingElements && !hasPendingFiles && !hasPendingOrder) {
+        return;
+      }
+
       isSyncing.current = true;
+      try {
+        // Snapshot pending payload and clear buffers so new incoming messages can schedule another flush.
+        const pendingElements = Array.from(pendingRemoteElementsRef.current.values());
+        pendingRemoteElementsRef.current.clear();
 
-      const currentAppState = excalidrawAPI.current.getAppState();
-      const mySelectedIds = currentAppState.selectedElementIds || {};
+        const incomingFiles = pendingRemoteFilesRef.current || {};
+        pendingRemoteFilesRef.current = {};
 
-      const validRemoteElements = elements.filter(
-        (el: any) => el?.isDeleted || !mySelectedIds[el.id]
-      );
+        const elementOrder = pendingRemoteElementOrderRef.current;
+        pendingRemoteElementOrderRef.current = null;
 
-      const localElements = excalidrawAPI.current.getSceneElementsIncludingDeleted();
-      const mergedElements = reconcileElements(localElements, validRemoteElements);
+        const shouldUpdateFiles = Object.keys(incomingFiles).length > 0;
+        const nextFiles = shouldUpdateFiles
+          ? { ...lastSyncedFilesRef.current, ...incomingFiles }
+          : lastSyncedFilesRef.current;
 
-      validRemoteElements.forEach((el: any) => {
-        recordElementVersion(el);
-      });
+        if (shouldUpdateFiles && typeof excalidrawAPI.current.addFiles === "function") {
+          excalidrawAPI.current.addFiles(Object.values(incomingFiles));
+        }
 
-      const incomingFiles = files || {};
-      const shouldUpdateFiles = Object.keys(incomingFiles).length > 0;
-      const nextFiles = shouldUpdateFiles
-        ? { ...lastSyncedFilesRef.current, ...incomingFiles }
-        : lastSyncedFilesRef.current;
+        const shouldUpdateElements =
+          pendingElements.length > 0 ||
+          (Array.isArray(elementOrder) && elementOrder.length > 0);
 
-      if (shouldUpdateFiles && typeof excalidrawAPI.current.addFiles === "function") {
-        excalidrawAPI.current.addFiles(Object.values(incomingFiles));
+        if (shouldUpdateElements) {
+          const localElements = excalidrawAPI.current.getSceneElementsIncludingDeleted();
+
+          // Don't drop remote updates just because the element is selected locally.
+          // The previous behavior could make a single element appear "stuck" (all other elements sync,
+          // but the selected one never applies remote updates).
+          let mergedElements = reconcileElements(localElements, pendingElements);
+          if (Array.isArray(elementOrder) && elementOrder.length > 0) {
+            mergedElements = applyElementOrder(mergedElements, elementOrder);
+            // Avoid immediately rebroadcasting the remote reorder back to the room.
+            lastSyncedElementOrderSigRef.current = computeElementOrderSig(mergedElements);
+          }
+
+          pendingElements.forEach((el: any) => {
+            recordElementVersion(el);
+          });
+
+          // Apply at most once per animation frame.
+          excalidrawAPI.current.updateScene({
+            elements: mergedElements,
+            ...(shouldUpdateFiles ? { files: nextFiles } : null),
+          });
+          latestElementsRef.current = mergedElements;
+        } else if (shouldUpdateFiles) {
+          // File-only update: avoid pushing a full elements array.
+          excalidrawAPI.current.updateScene({ files: nextFiles });
+        }
+
+        if (shouldUpdateFiles) {
+          latestFilesRef.current = nextFiles;
+          lastSyncedFilesRef.current = nextFiles;
+        }
+      } finally {
+        isSyncing.current = false;
       }
 
-      excalidrawAPI.current.updateScene({ elements: mergedElements });
-      latestElementsRef.current = mergedElements;
-      if (shouldUpdateFiles) {
-        latestFilesRef.current = nextFiles;
-        lastSyncedFilesRef.current = nextFiles;
+      // If more data arrived while we were flushing, schedule another frame.
+      const moreElements = pendingRemoteElementsRef.current.size > 0;
+      const moreFiles = Object.keys(pendingRemoteFilesRef.current || {}).length > 0;
+      const moreOrder =
+        Array.isArray(pendingRemoteElementOrderRef.current) &&
+        pendingRemoteElementOrderRef.current.length > 0;
+      if (moreElements || moreFiles || moreOrder) {
+        if (!remoteFlushScheduledRef.current) {
+          remoteFlushScheduledRef.current = true;
+          remoteFlushRafIdRef.current = requestAnimationFrame(flushRemoteUpdates);
+        }
       }
-      isSyncing.current = false;
-    });
+    };
+
+    const scheduleRemoteFlush = () => {
+      if (remoteFlushScheduledRef.current) return;
+      remoteFlushScheduledRef.current = true;
+      remoteFlushRafIdRef.current = requestAnimationFrame(flushRemoteUpdates);
+    };
+
+    socket.on(
+      "element-update",
+      ({
+        elements,
+        files,
+        elementOrder,
+      }: {
+        elements: any[];
+        files?: Record<string, any>;
+        elementOrder?: string[];
+      }) => {
+        if (Array.isArray(elements)) {
+          for (const el of elements) {
+            const id = el?.id;
+            if (typeof id === "string" && id.length > 0) {
+              pendingRemoteElementsRef.current.set(id, el);
+            }
+          }
+        }
+
+        if (files && typeof files === "object") {
+          pendingRemoteFilesRef.current = {
+            ...pendingRemoteFilesRef.current,
+            ...files,
+          };
+        }
+
+        if (Array.isArray(elementOrder) && elementOrder.length > 0) {
+          pendingRemoteElementOrderRef.current = elementOrder;
+        }
+
+        scheduleRemoteFlush();
+      }
+    );
 
 
     const handleActivity = (isActive: boolean) => {
@@ -376,27 +614,39 @@ export const Editor: React.FC = () => {
       document.removeEventListener('mouseenter', onMouseEnter);
       document.removeEventListener('mouseleave', onMouseLeave);
       socket.off('presence-update');
+      socket.off('error');
       socket.off('cursor-move');
       socket.off('element-update');
       socket.disconnect();
       cancelAnimationFrame(animationFrameId.current);
     };
-  }, [id, me, isReady, recordElementVersion]);
+  }, [
+    id,
+    me,
+    isReady,
+    recordElementVersion,
+    computeElementOrderSig,
+    navigate,
+    location.pathname,
+    location.search,
+    location.hash,
+  ]);
 
   const onPointerUpdate = useCallback((payload: any) => {
     const now = Date.now();
     if (now - lastCursorEmit.current > 50 && socketRef.current) {
+      const self = socketMeRef.current;
       socketRef.current.emit('cursor-move', {
         pointer: payload.pointer,
         button: payload.button,
-        username: me.name,
-        userId: me.id,
+        username: self.name,
+        userId: self.id,
         drawingId: id,
-        color: me.color
+        color: self.color
       });
       lastCursorEmit.current = now;
     }
-  }, [id, me]);
+  }, [id]);
 
   const excalidrawAPI = useRef<any>(null);
 
@@ -435,22 +685,57 @@ export const Editor: React.FC = () => {
     const hash = window.location.hash;
     if (!hash.includes('addLibrary=')) return;
 
-    const params = new URLSearchParams(hash.slice(1)); // Remove the leading #
+    const params = new URLSearchParams(hash.slice(1));
     const libraryUrl = params.get('addLibrary');
 
     if (!libraryUrl) return;
 
     const importLibraryFromUrl = async () => {
       try {
-        console.log('[Editor] Importing library from URL:', libraryUrl);
+        let parsedUrl: URL;
+        try {
+          parsedUrl = new URL(libraryUrl, window.location.href);
+        } catch {
+          throw new Error('Invalid library URL');
+        }
+
+        if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
+          throw new Error('Library URL must use http(s)');
+        }
+
+        const isLocalhost =
+          parsedUrl.hostname === 'localhost' ||
+          parsedUrl.hostname === '127.0.0.1' ||
+          parsedUrl.hostname === '::1';
+
+        const isCrossOrigin = parsedUrl.origin !== window.location.origin;
+        if (isCrossOrigin) {
+          const ok = window.confirm(
+            `Import library from external site?\n\n${parsedUrl.origin}\n\nOnly continue if you trust this source.`
+          );
+          if (!ok) {
+            toast.info('Library import canceled', { id: 'library-import' });
+            window.history.replaceState(null, '', window.location.pathname + window.location.search);
+            return;
+          }
+        }
+
+        if (!import.meta.env.DEV && parsedUrl.protocol === 'http:' && !isLocalhost) {
+          throw new Error('Insecure http:// library URL is not allowed');
+        }
+
+        console.log('[Editor] Importing library from URL:', parsedUrl.toString());
         toast.loading('Importing library...', { id: 'library-import' });
 
-        const response = await fetch(libraryUrl);
+        const response = await fetch(parsedUrl.toString(), { credentials: 'omit' });
         if (!response.ok) {
           throw new Error(`Failed to fetch library: ${response.statusText}`);
         }
 
         const blob = await response.blob();
+        if (blob.size > 10 * 1024 * 1024) {
+          throw new Error('Library file is too large');
+        }
 
         await excalidrawAPI.current.updateLibrary({
           libraryItems: blob,
@@ -460,7 +745,9 @@ export const Editor: React.FC = () => {
         });
 
         const updatedItems = excalidrawAPI.current.getAppState().libraryItems || [];
-        await api.updateLibrary([...updatedItems]);
+        if (user) {
+          await api.updateLibrary([...updatedItems]);
+        }
 
         toast.success('Library imported successfully', { id: 'library-import' });
         console.log('[Editor] Library import complete');
@@ -527,6 +814,9 @@ export const Editor: React.FC = () => {
         return;
       }
       const persistableFiles = files ?? latestFilesRef.current ?? {};
+      const filesChangedSincePersist =
+        Object.keys(getFilesDelta(lastPersistedFilesRef.current || {}, persistableFiles || {}))
+          .length > 0;
       const normalizedElements = normalizeImageElementStatus(
         persistableElements,
         persistableFiles
@@ -545,13 +835,16 @@ export const Editor: React.FC = () => {
           const updated = await api.updateDrawing(drawingId, {
             elements: normalizedElementsForSave,
             appState: persistableAppState,
-            files: persistableFiles,
+            ...(filesChangedSincePersist ? { files: persistableFiles } : {}),
             version: currentDrawingVersionRef.current ?? undefined,
           });
           if (typeof updated.version === "number") {
             currentDrawingVersionRef.current = updated.version;
           }
           lastPersistedElementsRef.current = normalizedElementsForSave;
+          if (filesChangedSincePersist) {
+            lastPersistedFilesRef.current = persistableFiles;
+          }
           console.log("[Editor] Save complete", { drawingId });
         } catch (err) {
           if (api.isAxiosError(err) && err.response?.status === 409) {
@@ -677,12 +970,17 @@ export const Editor: React.FC = () => {
   };
 
   saveLibraryRef.current = async (items: any[]) => {
+    if (!user) return;
     try {
       console.log("[Editor] Saving library", { itemCount: items.length });
       await api.updateLibrary(items);
       console.log("[Editor] Library save complete");
     } catch (err) {
       console.error('Failed to save library', err);
+      if (api.isAxiosError(err) && err.response?.status === 401) {
+        // Share sessions / anonymous users can't persist library to the server.
+        return;
+      }
       toast.error("Failed to save library");
     }
   };
@@ -696,11 +994,32 @@ export const Editor: React.FC = () => {
   );
   debouncedSaveRef.current = debouncedSave;
   const debouncedSavePreview = useCallback(
-    debounce((drawingId, elements, appState, files) => {
-      if (savePreviewRef.current) {
-        savePreviewRef.current(drawingId, elements, appState, files);
+    debounce((drawingId: string) => {
+      if (!savePreviewRef.current) return;
+      if (!drawingId) return;
+      if (isUnmounting.current) return;
+      if (isSyncing.current) return;
+
+      const run = () => {
+        if (!savePreviewRef.current) return;
+        if (isUnmounting.current) return;
+        if (isSyncing.current) return;
+
+        const elements = latestElementsRef.current;
+        const appState = latestAppStateRef.current;
+        const files = latestFilesRef.current || {};
+        if (!appState) return;
+
+        void savePreviewRef.current(drawingId, elements, appState, files);
+      };
+
+      const w = window as any;
+      if (typeof w.requestIdleCallback === "function") {
+        w.requestIdleCallback(run, { timeout: 2000 });
+      } else {
+        setTimeout(run, 0);
       }
-    }, 10000),
+    }, 30_000),
     []
   );
 
@@ -726,14 +1045,22 @@ export const Editor: React.FC = () => {
 
       const changes: any[] = [];
 
-      elements.forEach((el) => {
+      const nextFiles = currentFiles || excalidrawAPI.current?.getFiles() || {};
+      const normalizedElements = normalizeImageElementStatus(elements, nextFiles);
+
+      const nextOrderSig = computeElementOrderSig(normalizedElements);
+      const shouldSyncOrder = nextOrderSig !== lastSyncedElementOrderSigRef.current;
+      if (shouldSyncOrder) {
+        lastSyncedElementOrderSigRef.current = nextOrderSig;
+      }
+
+      normalizedElements.forEach((el) => {
         if (hasElementChanged(el)) {
           changes.push(el);
           recordElementVersion(el);
         }
       });
 
-      const nextFiles = currentFiles || excalidrawAPI.current?.getFiles() || {};
       const filesDelta = getFilesDelta(lastSyncedFilesRef.current, nextFiles);
       const shouldSyncFiles = Object.keys(filesDelta).length > 0;
 
@@ -744,33 +1071,54 @@ export const Editor: React.FC = () => {
         lastSyncedFilesRef.current = nextFiles;
       }
 
-      if (changes.length > 0 || shouldSyncFiles) {
+      if (changes.length > 0 || shouldSyncFiles || shouldSyncOrder) {
+        hasSceneChangesSinceLoadRef.current = true;
         socketRef.current.emit('element-update', {
           drawingId: id,
           elements: changes.length > 0 ? changes : [],
           files: shouldSyncFiles ? filesDelta : undefined,
-          userId: me.id
+          elementOrder: shouldSyncOrder
+            ? normalizedElements.map((el: any) => el?.id).filter(Boolean)
+            : undefined,
+          userId: socketMeRef.current.id
         });
+
+        // Only schedule persistence when there's a real scene change (elements or files).
+        // This keeps autosave aligned with the throttled diff pass and avoids unthrottled O(n) scans.
+        const appState = latestAppStateRef.current;
+        if (appState) {
+          debouncedSave(id, normalizedElements, appState, nextFiles);
+          debouncedSavePreview(id);
+        }
       }
     }, 100, { leading: true, trailing: true }),
-    [id, hasElementChanged, recordElementVersion]
+    [
+      id,
+      hasElementChanged,
+      recordElementVersion,
+      debouncedSave,
+      debouncedSavePreview,
+      computeElementOrderSig,
+    ]
   );
 
   useEffect(() => {
     isBootstrappingScene.current = true;
     hasHydratedInitialScene.current = false;
-    elementVersionMap.current.clear();
-    saveQueueRef.current = Promise.resolve();
-    latestElementsRef.current = [];
-    initialSceneElementsRef.current = [];
-    latestFilesRef.current = {};
-    lastSyncedFilesRef.current = {};
-    currentDrawingVersionRef.current = null;
-    lastPersistedElementsRef.current = [];
-    suspiciousBlankLoadRef.current = false;
-    hasSceneChangesSinceLoadRef.current = false;
-    excalidrawAPI.current = null;
-    setIsReady(false);
+	    elementVersionMap.current.clear();
+	    saveQueueRef.current = Promise.resolve();
+	    latestElementsRef.current = [];
+	    initialSceneElementsRef.current = [];
+	    latestFilesRef.current = {};
+	    lastSyncedFilesRef.current = {};
+	    lastSyncedElementOrderSigRef.current = "";
+	    lastPersistedFilesRef.current = {};
+	    currentDrawingVersionRef.current = null;
+	    lastPersistedElementsRef.current = [];
+	    suspiciousBlankLoadRef.current = false;
+	    hasSceneChangesSinceLoadRef.current = false;
+	    excalidrawAPI.current = null;
+	    setIsReady(false);
     setIsSceneLoading(true);
     setLoadError(null);
     setInitialData(null);
@@ -782,14 +1130,20 @@ export const Editor: React.FC = () => {
         return;
       }
       try {
-        const [data, libraryItems] = await Promise.all([
-          api.getDrawing(id),
-          api.getLibrary().catch((err) => {
-            console.warn('Failed to load library, using empty:', err);
-            return [];
-          })
-        ]);
+        const libraryItemsPromise = user
+          ? api.getLibrary().catch((err) => {
+              console.warn("Failed to load library, using empty:", err);
+              return [];
+            })
+          : Promise.resolve([]);
+
+        const [data, libraryItems] = await Promise.all([api.getDrawing(id), libraryItemsPromise]);
         setDrawingName(data.name);
+        setAccessLevel(
+          data.accessLevel === "view" || data.accessLevel === "edit" || data.accessLevel === "owner"
+            ? data.accessLevel
+            : "owner"
+        );
 
         const elements = data.elements || [];
         const files = data.files || {};
@@ -797,18 +1151,21 @@ export const Editor: React.FC = () => {
         const loadedRenderable = hasRenderableElements(elements);
         suspiciousBlankLoadRef.current = !loadedRenderable && hasPreview;
         hasSceneChangesSinceLoadRef.current = false;
-        console.log("[Editor] Loaded drawing", {
-          drawingId: id,
-          elementCount: elements.length,
-          loadedRenderable,
-          hasPreview,
-          version: data.version ?? null,
-          suspiciousBlankLoad: suspiciousBlankLoadRef.current,
-        });
+        if (import.meta.env.DEV) {
+          console.log("[Editor] Loaded drawing", {
+            drawingId: id,
+            elementCount: elements.length,
+            loadedRenderable,
+            hasPreview,
+            version: data.version ?? null,
+            suspiciousBlankLoad: suspiciousBlankLoadRef.current,
+          });
+        }
         latestElementsRef.current = elements;
         initialSceneElementsRef.current = elements;
         latestFilesRef.current = files;
         lastSyncedFilesRef.current = files;
+        lastPersistedFilesRef.current = files;
         currentDrawingVersionRef.current = typeof data.version === "number" ? data.version : null;
         lastPersistedElementsRef.current = elements;
 
@@ -847,14 +1204,24 @@ export const Editor: React.FC = () => {
           } else if (err.response?.status === 404) {
             message = "Drawing not found";
           }
+
+          // When a link-shared drawing URL is opened via `/editor/:id` by a signed-in user who
+          // lacks explicit ACL access, prefer bouncing to the public route (`/shared/:id`) so
+          // link-share policy can apply cleanly.
+          if (err.response?.status === 403 && id && location.pathname.startsWith("/editor/")) {
+            navigate(`/shared/${id}${location.search}${location.hash}`, { replace: true });
+            return;
+          }
         }
         toast.error(message);
         latestElementsRef.current = [];
-        initialSceneElementsRef.current = [];
-        latestFilesRef.current = {};
-        lastSyncedFilesRef.current = {};
-        currentDrawingVersionRef.current = null;
-        lastPersistedElementsRef.current = [];
+          initialSceneElementsRef.current = [];
+          latestFilesRef.current = {};
+          lastSyncedFilesRef.current = {};
+          lastSyncedElementOrderSigRef.current = "";
+          lastPersistedFilesRef.current = {};
+          currentDrawingVersionRef.current = null;
+          lastPersistedElementsRef.current = [];
         suspiciousBlankLoadRef.current = false;
         hasSceneChangesSinceLoadRef.current = false;
         setLoadError(message);
@@ -864,12 +1231,22 @@ export const Editor: React.FC = () => {
       }
     };
     loadData();
-  }, [id, recordElementVersion, buildEmptyScene]);
+  }, [
+    id,
+    recordElementVersion,
+    buildEmptyScene,
+    user,
+    navigate,
+    location.pathname,
+    location.search,
+    location.hash,
+  ]);
 
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
         e.preventDefault();
+        if (!canEdit) return;
         if (excalidrawAPI.current && saveDataRef.current && savePreviewRef.current) {
           const elements = excalidrawAPI.current.getSceneElementsIncludingDeleted();
           const {
@@ -899,11 +1276,14 @@ export const Editor: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [enqueueSceneSave, id, resolveSafeSnapshot]);
+  }, [enqueueSceneSave, id, resolveSafeSnapshot, canEdit]);
 
   const handleCanvasChange = useCallback((elements: readonly any[], appState: any, files?: Record<string, any>) => {
+    if (!canEdit) return;
     if (isUnmounting.current) {
-      console.log("[Editor] Ignoring change during unmount", { drawingId: id });
+      if (import.meta.env.DEV) {
+        console.log("[Editor] Ignoring change during unmount", { drawingId: id });
+      }
       return;
     }
 
@@ -935,12 +1315,14 @@ export const Editor: React.FC = () => {
       );
 
       if (transientHydrationEmpty || transientHydrationNonRenderable) {
-        console.log("[Editor] Skipping transient hydration snapshot", {
-          drawingId: id,
-          elementCount: allElements.length,
-          transientHydrationEmpty,
-          transientHydrationNonRenderable,
-        });
+        if (import.meta.env.DEV) {
+          console.log("[Editor] Skipping transient hydration snapshot", {
+            drawingId: id,
+            elementCount: allElements.length,
+            transientHydrationEmpty,
+            transientHydrationNonRenderable,
+          });
+        }
         return;
       }
 
@@ -948,23 +1330,21 @@ export const Editor: React.FC = () => {
       isBootstrappingScene.current = false;
 
       if (matchesInitialSnapshot) {
-        console.log("[Editor] Skipping hydration change", {
-          drawingId: id,
-          elementCount: allElements.length,
-        });
+        if (import.meta.env.DEV) {
+          console.log("[Editor] Skipping hydration change", {
+            drawingId: id,
+            elementCount: allElements.length,
+          });
+        }
         return;
       }
 
-      console.log("[Editor] First live change after hydration", {
-        drawingId: id,
-        elementCount: allElements.length,
-      });
-    }
-
-    const noFileChanges =
-      Object.keys(getFilesDelta(latestFilesRef.current || {}, currentFiles || {})).length === 0;
-    if (haveSameElements(allElements, latestElementsRef.current) && noFileChanges) {
-      return;
+      if (import.meta.env.DEV) {
+        console.log("[Editor] First live change after hydration", {
+          drawingId: id,
+          elementCount: allElements.length,
+        });
+      }
     }
 
     const {
@@ -985,43 +1365,28 @@ export const Editor: React.FC = () => {
     const hasRenderable = hasRenderableElements(allElements);
     if (hasRenderable && suspiciousBlankLoadRef.current) {
       suspiciousBlankLoadRef.current = false;
-      console.log("[Editor] Cleared suspicious blank load guard after renderable edit", {
-        drawingId: id,
-        elementCount: allElements.length,
-      });
+      if (import.meta.env.DEV) {
+        console.log("[Editor] Cleared suspicious blank load guard after renderable edit", {
+          drawingId: id,
+          elementCount: allElements.length,
+        });
+      }
     }
     if (isBootstrappingScene.current && !hasRenderable) {
-      console.log("[Editor] Bootstrapping guard active", {
-        drawingId: id,
-        elementCount: allElements.length,
-      });
+      if (import.meta.env.DEV) {
+        console.log("[Editor] Bootstrapping guard active", {
+          drawingId: id,
+          elementCount: allElements.length,
+        });
+      }
       return;
     }
     latestElementsRef.current = allElements;
-    hasSceneChangesSinceLoadRef.current = true;
 
     broadcastChanges(allElements, currentFiles);
 
-    const filesSnapshot = currentFiles;
-    latestFilesRef.current = filesSnapshot;
-
-    console.log("[Editor] Queueing save", {
-      drawingId: id,
-      elementCount: allElements.length,
-      hasRenderableElements: hasRenderable,
-    });
-    if (id) {
-      debouncedSave(id, allElements, appState, filesSnapshot);
-    }
-
-    console.log("[Editor] Queueing preview save", {
-      drawingId: id,
-      fileCount: Object.keys(filesSnapshot).length,
-    });
-    if (id) {
-      debouncedSavePreview(id, allElements, appState, filesSnapshot);
-    }
-  }, [debouncedSave, debouncedSavePreview, broadcastChanges, id, resolveSafeSnapshot]);
+    // `broadcastChanges` schedules persistence only when it actually detects diffs.
+  }, [debouncedSave, debouncedSavePreview, broadcastChanges, id, resolveSafeSnapshot, canEdit]);
 
   useEffect(() => {
     if (!id || !isReady) return;
@@ -1054,6 +1419,7 @@ export const Editor: React.FC = () => {
 
   const handleRenameSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canEdit) return;
     if (newName.trim() && id) {
       setDrawingName(newName);
       setIsRenaming(false);
@@ -1066,9 +1432,13 @@ export const Editor: React.FC = () => {
   };
 
   const handleLibraryChange = useCallback((items: readonly any[]) => {
-    console.log("[Editor] Library changed", { itemCount: items.length });
+    if (!canEdit) return;
+    if (!user) return;
+    if (import.meta.env.DEV) {
+      console.log("[Editor] Library changed", { itemCount: items.length });
+    }
     debouncedSaveLibrary([...items]);
-  }, [debouncedSaveLibrary]);
+  }, [debouncedSaveLibrary, canEdit, user]);
 
 
   const handleBackClick = async () => {
@@ -1079,6 +1449,8 @@ export const Editor: React.FC = () => {
 
     try {
       if (!(excalidrawAPI.current && saveDataRef.current && savePreviewRef.current)) {
+        shouldNavigate = true;
+      } else if (!canEdit) {
         shouldNavigate = true;
       } else if (!hasSceneChangesSinceLoadRef.current) {
         console.log("[Editor] Skipping back-navigation save: no scene changes since load", {
@@ -1173,7 +1545,7 @@ export const Editor: React.FC = () => {
           ) : (
             <h1
               className="font-medium text-gray-900 dark:text-white px-2 py-1 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded cursor-text"
-              onDoubleClick={() => { setNewName(drawingName); setIsRenaming(true); }}
+              onDoubleClick={() => { if (!canEdit) return; setNewName(drawingName); setIsRenaming(true); }}
             >
               {drawingName}
             </h1>
@@ -1181,11 +1553,31 @@ export const Editor: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-3">
+          {!canEdit ? (
+            <span className="text-xs font-semibold px-2 py-1 rounded-full bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-200 border border-amber-200 dark:border-amber-800">
+              Read-only
+            </span>
+          ) : null}
+          {accessLevel === "owner" && id ? (
+            <button
+              onClick={() => setIsShareOpen(true)}
+              className="p-2 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-lg text-gray-600 dark:text-gray-300 transition-colors"
+              title="Share"
+            >
+              <Share2 size={20} />
+            </button>
+          ) : null}
           <button
             onClick={() => {
-              setAutoHideEnabled(!autoHideEnabled);
-              if (!autoHideEnabled) {
-                setIsHeaderVisible(true);
+              const next = !autoHideEnabled;
+              setAutoHideEnabled(next);
+              setIsHeaderVisible(true);
+              if (autoHideStorageKey) {
+                try {
+                  window.localStorage.setItem(autoHideStorageKey, next ? "1" : "0");
+                } catch {
+                  // Ignore storage failures (e.g. private mode, quota).
+                }
               }
             }}
             className="p-2 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-lg text-gray-600 dark:text-gray-300 transition-colors"
@@ -1285,6 +1677,7 @@ export const Editor: React.FC = () => {
             onLibraryChange={handleLibraryChange}
             excalidrawAPI={setExcalidrawAPI}
             UIOptions={UIOptions}
+            viewModeEnabled={!canEdit}
           />
         ) : (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-gray-500 dark:text-gray-400">
@@ -1295,6 +1688,15 @@ export const Editor: React.FC = () => {
         )}
         <Toaster position="bottom-center" />
       </div>
+
+      {id ? (
+        <ShareModal
+          drawingId={id}
+          drawingName={drawingName}
+          isOpen={isShareOpen}
+          onClose={() => setIsShareOpen(false)}
+        />
+      ) : null}
     </div>
   );
 };

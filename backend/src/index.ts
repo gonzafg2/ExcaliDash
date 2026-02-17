@@ -21,7 +21,7 @@ import {
   appStateSchema,
 } from "./security";
 import { config } from "./config";
-import { authModeService, requireAuth } from "./middleware/auth";
+import { authModeService, requireAuth, optionalAuth } from "./middleware/auth";
 import { errorHandler, asyncHandler } from "./middleware/errorHandler";
 import authRouter from "./auth";
 import { logAuditEvent } from "./utils/audit";
@@ -134,7 +134,7 @@ const io = new Server(httpServer, {
     origin: (origin, cb) => cb(null, isAllowedOrigin(origin ?? undefined)),
     credentials: true,
   },
-  maxHttpBufferSize: 1e8,
+  maxHttpBufferSize: 50 * 1024 * 1024,
 });
 const parseJsonField = <T>(
   rawValue: string | null | undefined,
@@ -642,6 +642,7 @@ registerSystemRoutes(app, {
 registerDashboardRoutes(app, {
   prisma,
   requireAuth,
+  optionalAuth,
   asyncHandler,
   parseJsonField,
   sanitizeText,

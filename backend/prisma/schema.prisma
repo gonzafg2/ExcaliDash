@@ -21,6 +21,7 @@ model User {
   authIdentities      AuthIdentity[]
   drawings            Drawing[]
   collections         Collection[]
+  drawingPermissions  DrawingPermission[]
   passwordResetTokens PasswordResetToken[]
   refreshTokens       RefreshToken[]
   auditLogs           AuditLog[]
@@ -68,11 +69,49 @@ model Drawing {
   user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   collectionId String?
   collection   Collection? @relation(fields: [collectionId], references: [id])
+  permissions  DrawingPermission[]
+  linkShares   DrawingLinkShare[]
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
   @@index([userId, updatedAt])
   @@index([userId, collectionId, updatedAt])
+}
+
+model DrawingPermission {
+  id           String   @id @default(uuid())
+  drawingId    String
+  drawing      Drawing  @relation(fields: [drawingId], references: [id], onDelete: Cascade)
+  granteeUserId String
+  granteeUser  User     @relation(fields: [granteeUserId], references: [id], onDelete: Cascade)
+  permission   String // "view" | "edit"
+  createdByUserId String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([drawingId, granteeUserId], name: "drawingId_granteeUserId")
+  @@index([granteeUserId])
+  @@index([drawingId])
+}
+
+model DrawingLinkShare {
+  id            String   @id @default(uuid())
+  drawingId     String
+  drawing       Drawing  @relation(fields: [drawingId], references: [id], onDelete: Cascade)
+  permission    String // "view" | "edit"
+  tokenHash     String   @unique
+  passphraseHash String?
+  expiresAt     DateTime?
+  revokedAt     DateTime?
+  failedAttempts Int     @default(0)
+  lockedUntil   DateTime?
+  lastUsedAt    DateTime?
+  lastUsedIp    String?
+  createdByUserId String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([drawingId])
 }
 
 model Library {

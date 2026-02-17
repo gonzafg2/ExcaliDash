@@ -17,6 +17,48 @@ vi.mock("@excalidraw/excalidraw", () => ({
 
 import { importLegacyFiles } from "./importUtils";
 
+vi.mock("jszip", () => {
+  class FakeEntry {
+    name: string;
+    dir: boolean;
+    private _content: string;
+    constructor(name: string, content: string) {
+      this.name = name;
+      this.dir = false;
+      this._content = content;
+    }
+    async async(_type: string) {
+      return this._content;
+    }
+  }
+
+  class FakeZip {
+    files: Record<string, any>;
+    constructor(entries: Array<{ name: string; content: string }>) {
+      this.files = {};
+      for (const e of entries) {
+        this.files[e.name] = new FakeEntry(e.name, e.content);
+      }
+    }
+  }
+
+  return {
+    default: {
+      loadAsync: async () =>
+        new FakeZip([
+          {
+            name: "Unorganized/hello.excalidraw",
+            content: JSON.stringify({ elements: [], appState: {}, files: {} }),
+          },
+          {
+            name: "My Collection/world.excalidraw",
+            content: JSON.stringify({ elements: [], appState: {}, files: {} }),
+          },
+        ]),
+    },
+  };
+});
+
 describe("importLegacyFiles", () => {
   const makeTestFile = (json: unknown, name: string) =>
     ({
@@ -147,5 +189,35 @@ describe("importLegacyFiles", () => {
     expect(drawCalls).toHaveLength(1);
     expect(drawCalls[0][1].name).toBe("hello");
     expect(exportToSvg).toHaveBeenCalledTimes(1);
+  });
+
+  it("imports a v0.3.x Export Data (JSON) zip (/export/json) into collections by folder", async () => {
+    apiGet.mockResolvedValueOnce({ data: [] });
+    apiPost.mockImplementation(async (url: string, body?: any) => {
+      if (url === "/collections") {
+        return { data: { id: "col-created", name: body?.name || "My Collection" } };
+      }
+      if (url === "/drawings") return { data: { success: true } };
+      throw new Error(`Unexpected POST ${url}`);
+    });
+
+    const zipFile = ({
+      name: "excalidraw-drawings-2026-02-17.zip",
+      arrayBuffer: async () => new ArrayBuffer(0),
+    } as unknown) as File;
+
+    const result = await importLegacyFiles([zipFile], null);
+    expect(result.failed).toBe(0);
+    expect(result.success).toBe(2);
+
+    // One collection created for "My Collection"; "Unorganized" stays unorganized (null).
+    expect(apiPost.mock.calls.filter((c) => c[0] === "/collections")).toHaveLength(1);
+
+    const drawCalls = apiPost.mock.calls.filter((c) => c[0] === "/drawings");
+    expect(drawCalls).toHaveLength(2);
+    expect(drawCalls[0][1].name).toBe("hello");
+    expect(drawCalls[0][1].collectionId).toBe(null);
+    expect(drawCalls[1][1].name).toBe("world");
+    expect(drawCalls[1][1].collectionId).toBe("col-created");
   });
 });

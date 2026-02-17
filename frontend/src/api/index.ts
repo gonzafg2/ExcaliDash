@@ -222,6 +222,11 @@ const getAuthEnabledStatus = async (): Promise<boolean | null> => {
 };
 
 const redirectToLogin = async () => {
+  const isShareFlow =
+    window.location.pathname.startsWith("/share/") ||
+    window.location.pathname.startsWith("/shared/");
+  if (isShareFlow) return;
+
   try {
     const status = await authStatus();
     if (status?.oidcEnforced) {
@@ -297,7 +302,17 @@ api.interceptors.response.use(
       const originalRequest = (error.config || {}) as RetriableRequestConfig;
       const url = String(originalRequest.url || "");
       const isAuthRoute = url.includes('/auth/');
+      const isShareFlow =
+        window.location.pathname.startsWith("/share/") ||
+        window.location.pathname.startsWith("/shared/");
       const authEnabled = !isAuthRoute ? await getAuthEnabledStatus() : true;
+
+      // Share links can grant access to drawings without a logged-in user session.
+      // In that flow, attempting refresh-token rotation on unrelated 401s (e.g. /library)
+      // just adds latency and extra failed requests.
+      if (isShareFlow && !isAuthRoute) {
+        return Promise.reject(error);
+      }
 
       if (!isAuthRoute && authEnabled === false) {
         if (!originalRequest._authModeRetry) {
@@ -314,14 +329,18 @@ api.interceptors.response.use(
           return api(originalRequest as any);
         } catch {
           clearStoredAuth();
-          await redirectToLogin();
+          if (!isShareFlow) {
+            await redirectToLogin();
+          }
           return Promise.reject(error);
         }
       }
 
       if (!isAuthRoute) {
         clearStoredAuth();
-        await redirectToLogin();
+        if (!isShareFlow) {
+          await redirectToLogin();
+        }
       }
     }
 
@@ -464,9 +483,114 @@ export async function getDrawings(
   };
 }
 
+export async function getSharedDrawings(
+  search?: string,
+  options?: {
+    limit?: number;
+    offset?: number;
+    sortField?: DrawingSortField;
+    sortDirection?: SortDirection;
+  }
+): Promise<PaginatedDrawings<DrawingSummary>> {
+  const params: Record<string, string | number> = {};
+  if (search) params.search = search;
+  if (options?.limit !== undefined) params.limit = options.limit;
+  if (options?.offset !== undefined) params.offset = options.offset;
+  if (options?.sortField) params.sortField = options.sortField;
+  if (options?.sortDirection) params.sortDirection = options.sortDirection;
+  const response = await api.get<PaginatedDrawings<DrawingSummary>>("/drawings/shared", { params });
+  return {
+    ...response.data,
+    drawings: response.data.drawings.map(deserializeDrawingSummary),
+  };
+}
+
 export const getDrawing = async (id: string) => {
   const response = await api.get<Drawing>(`/drawings/${id}`);
   return deserializeDrawing(response.data);
+};
+
+export const exchangeShareLink = async (params: {
+  drawingId: string;
+  token: string;
+  passphrase?: string;
+}): Promise<{ success: true; permission: "view" | "edit"; expiresAt: string }> => {
+  const response = await api.post<{ success: true; permission: "view" | "edit"; expiresAt: string }>(
+    "/shares/exchange",
+    {
+      drawingId: params.drawingId,
+      token: params.token,
+      passphrase: params.passphrase ?? "",
+    }
+  );
+  return response.data;
+};
+
+export type ShareResolvedUser = { id: string; name: string; email: string };
+
+export const resolveShareUsers = async (drawingId: string, q: string): Promise<ShareResolvedUser[]> => {
+  const response = await api.get<{ users: ShareResolvedUser[] }>(`/drawings/${drawingId}/share-resolve`, {
+    params: { q },
+  });
+  return response.data.users;
+};
+
+export type DrawingPermissionRow = {
+  id: string;
+  granteeUserId: string;
+  permission: "view" | "edit";
+  createdAt: string | number | Date;
+  updatedAt: string | number | Date;
+  granteeUser: ShareResolvedUser;
+};
+
+export type DrawingLinkShareRow = {
+  id: string;
+  permission: "view" | "edit";
+  expiresAt: string | null;
+  revokedAt: string | null;
+  createdAt: string | number | Date;
+  updatedAt: string | number | Date;
+  lastUsedAt: string | null;
+};
+
+export const getDrawingSharing = async (drawingId: string): Promise<{
+  permissions: DrawingPermissionRow[];
+  linkShares: DrawingLinkShareRow[];
+}> => {
+  const response = await api.get<{ permissions: DrawingPermissionRow[]; linkShares: DrawingLinkShareRow[] }>(
+    `/drawings/${drawingId}/sharing`
+  );
+  return response.data;
+};
+
+export const upsertDrawingPermission = async (
+  drawingId: string,
+  params: { granteeUserId: string; permission: "view" | "edit" }
+): Promise<{ permission: DrawingPermissionRow }> => {
+  const response = await api.post<{ permission: DrawingPermissionRow }>(`/drawings/${drawingId}/permissions`, params);
+  return response.data;
+};
+
+export const revokeDrawingPermission = async (drawingId: string, permissionId: string): Promise<{ success: true }> => {
+  const response = await api.delete<{ success: true }>(`/drawings/${drawingId}/permissions/${permissionId}`);
+  return response.data;
+};
+
+export const createLinkShare = async (
+  drawingId: string,
+  params: { permission: "view" | "edit"; expiresAt?: string; passphrase?: string }
+): Promise<{ share: DrawingLinkShareRow; token: string }> => {
+  const response = await api.post<{ share: DrawingLinkShareRow; token: string }>(
+    `/drawings/${drawingId}/link-shares`,
+    params
+  );
+  return response.data;
+};
+
+export const revokeLinkShare = async (drawingId: string, shareId: string): Promise<{ success: true }> => {
+  const response = await api.delete<{ success: true }>(`/drawings/${drawingId}/link-shares/${shareId}`);
+  return response.data;
 };
 
 export const createDrawing = async (

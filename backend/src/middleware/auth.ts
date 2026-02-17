@@ -18,6 +18,10 @@ declare global {
         mustResetPassword?: boolean;
         impersonatorId?: string;
       };
+      principal?: {
+        kind: "user";
+        userId: string;
+      };
     }
   }
 }
@@ -202,6 +206,17 @@ export const createAuthMiddleware = ({
     try {
       const authEnabled = await authModeService.getAuthEnabled();
       if (!authEnabled) {
+        // Keep optionalAuth behavior consistent with requireAuth when auth is disabled:
+        // attach the bootstrap acting user so downstream routes can authorize ownership correctly.
+        const user = await authModeService.getBootstrapActingUser();
+        req.user = {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          mustResetPassword: user.mustResetPassword,
+        };
         return next();
       }
     } catch (error) {

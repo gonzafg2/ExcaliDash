@@ -258,8 +258,9 @@ export const Dashboard: React.FC = () => {
   const currentSortOption = sortOptions.find(opt => opt.field === sortConfig.field) || sortOptions[0];
 
   const isTrashView = selectedCollectionId === 'trash';
+  const isSharedView = selectedCollectionId === 'shared';
   const handleCreateDrawing = async () => {
-    if (isTrashView) return;
+    if (isTrashView || isSharedView) return;
     try {
       const targetCollectionId = selectedCollectionId === undefined ? null : selectedCollectionId;
       const { id } = await api.createDrawing('Untitled Drawing', targetCollectionId);
@@ -270,7 +271,7 @@ export const Dashboard: React.FC = () => {
   };
 
   const handleImportDrawings = async (files: FileList | null) => {
-    if (!files || isTrashView) return;
+    if (!files || isTrashView || isSharedView) return;
 
     const fileArray = Array.from(files);
     const targetCollectionId = selectedCollectionId === undefined ? null : selectedCollectionId;
@@ -516,6 +517,7 @@ export const Dashboard: React.FC = () => {
   const viewTitle = React.useMemo(() => {
     if (selectedCollectionId === undefined) return "All Drawings";
     if (selectedCollectionId === null) return "Unorganized";
+    if (selectedCollectionId === 'shared') return "Shared with me";
     if (selectedCollectionId === 'trash') return "Trash";
     const collection = collections.find(c => c.id === selectedCollectionId);
     return collection ? collection.name : "Collection";
@@ -537,6 +539,7 @@ export const Dashboard: React.FC = () => {
   const handleDrop = async (e: React.DragEvent, targetCollectionId: string | null) => {
     e.preventDefault();
     e.stopPropagation();
+    if (isSharedView) return;
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const files = Array.from(e.dataTransfer.files);
@@ -627,7 +630,7 @@ export const Dashboard: React.FC = () => {
       onCreateCollection={handleCreateCollection}
       onEditCollection={handleEditCollection}
       onDeleteCollection={handleDeleteCollection}
-      onDrop={handleDrop}
+      onDrop={isSharedView ? undefined : handleDrop}
     >
       <div
         id="drag-preview"
@@ -783,41 +786,41 @@ export const Dashboard: React.FC = () => {
               {allSelected ? <CheckSquare size={20} /> : <Square size={20} />}
             </button>
 
-            <button
-              onClick={handleBulkDeleteClick}
-              disabled={!hasSelection}
-              className={clsx(
-                "h-[42px] w-[42px] flex items-center justify-center rounded-xl border-2 transition-all",
-                hasSelection
-                  ? "bg-white dark:bg-neutral-800 border-black dark:border-neutral-700 text-rose-600 dark:text-rose-400 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-1 hover:bg-rose-50 dark:hover:bg-rose-900/30"
-                  : "bg-slate-100 dark:bg-neutral-900 border-slate-300 dark:border-neutral-800 text-slate-300 dark:text-neutral-700 cursor-not-allowed"
-              )}
-              title={isTrashView ? "Delete Permanently" : "Move to Trash"}
-            >
-              <Trash2 size={20} />
-            </button>
+          <button
+            onClick={handleBulkDeleteClick}
+            disabled={!hasSelection || isSharedView}
+            className={clsx(
+              "h-[42px] w-[42px] flex items-center justify-center rounded-xl border-2 transition-all",
+              hasSelection && !isSharedView
+                ? "bg-white dark:bg-neutral-800 border-black dark:border-neutral-700 text-rose-600 dark:text-rose-400 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-1 hover:bg-rose-50 dark:hover:bg-rose-900/30"
+                : "bg-slate-100 dark:bg-neutral-900 border-slate-300 dark:border-neutral-800 text-slate-300 dark:text-neutral-700 cursor-not-allowed"
+            )}
+            title={isTrashView ? "Delete Permanently" : "Move to Trash"}
+          >
+            <Trash2 size={20} />
+          </button>
 
-            <button
-              onClick={handleBulkDuplicate}
-              disabled={!hasSelection || isTrashView}
-              className={clsx(
-                "h-[42px] w-[42px] flex items-center justify-center rounded-xl border-2 transition-all",
-                hasSelection && !isTrashView
-                  ? "bg-white dark:bg-neutral-800 border-black dark:border-neutral-700 text-indigo-600 dark:text-indigo-400 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-1 hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
-                  : "bg-slate-100 dark:bg-neutral-900 border-slate-300 dark:border-neutral-800 text-slate-300 dark:text-neutral-700 cursor-not-allowed"
-              )}
-              title="Duplicate Selected"
-            >
-              <Copy size={20} />
-            </button>
+          <button
+            onClick={handleBulkDuplicate}
+            disabled={!hasSelection || isTrashView || isSharedView}
+            className={clsx(
+              "h-[42px] w-[42px] flex items-center justify-center rounded-xl border-2 transition-all",
+              hasSelection && !isTrashView && !isSharedView
+                ? "bg-white dark:bg-neutral-800 border-black dark:border-neutral-700 text-indigo-600 dark:text-indigo-400 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-1 hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
+                : "bg-slate-100 dark:bg-neutral-900 border-slate-300 dark:border-neutral-800 text-slate-300 dark:text-neutral-700 cursor-not-allowed"
+            )}
+            title="Duplicate Selected"
+          >
+            <Copy size={20} />
+          </button>
 
             <div className="relative">
               <button
                 onClick={() => hasSelection && setShowBulkMoveMenu(!showBulkMoveMenu)}
-                disabled={!hasSelection}
+                disabled={!hasSelection || isSharedView}
                 className={clsx(
                   "h-[42px] w-[42px] flex items-center justify-center rounded-xl border-2 transition-all",
-                  hasSelection
+                  hasSelection && !isSharedView
                     ? "bg-white dark:bg-neutral-800 border-black dark:border-neutral-700 text-emerald-600 dark:text-emerald-400 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-1 hover:bg-emerald-50 dark:hover:bg-emerald-900/30"
                     : "bg-slate-100 dark:bg-neutral-900 border-slate-300 dark:border-neutral-800 text-slate-300 dark:text-neutral-700 cursor-not-allowed"
                 )}
@@ -871,10 +874,10 @@ export const Dashboard: React.FC = () => {
 
           <button
             onClick={() => document.getElementById('dashboard-import')?.click()}
-            disabled={isTrashView}
+            disabled={isTrashView || isSharedView}
             className={clsx(
               "h-[42px] w-full sm:w-auto flex items-center justify-center gap-2 px-6 rounded-xl border-2 border-black dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] transition-all font-bold text-sm whitespace-nowrap",
-              isTrashView
+              isTrashView || isSharedView
                 ? "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-300 dark:border-slate-700 shadow-none cursor-not-allowed"
                 : "bg-emerald-600 dark:bg-neutral-800 text-white hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-1 active:translate-y-0 active:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:active:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)]"
             )}
@@ -885,10 +888,10 @@ export const Dashboard: React.FC = () => {
 
           <button
             onClick={handleCreateDrawing}
-            disabled={isTrashView}
+            disabled={isTrashView || isSharedView}
             className={clsx(
               "h-[42px] w-full sm:w-auto flex items-center justify-center gap-2 px-6 rounded-xl border-2 border-black dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] transition-all font-bold text-sm whitespace-nowrap",
-              isTrashView
+              isTrashView || isSharedView
                 ? "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-300 dark:border-slate-700 shadow-none cursor-not-allowed"
                 : "bg-indigo-600 dark:bg-neutral-800 text-white hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-1 active:translate-y-0 active:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:active:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)]"
             )}
@@ -915,6 +918,7 @@ export const Dashboard: React.FC = () => {
           setIsDraggingFile(false);
           dragCounter.current = 0;
           const target = selectedCollectionId === undefined ? null : selectedCollectionId;
+          if (isSharedView) return;
           handleDrop(e, target);
         }}
       >
@@ -972,6 +976,7 @@ export const Dashboard: React.FC = () => {
                   drawing={drawing}
                   collections={collections}
                   isSelected={selectedIds.has(drawing.id)}
+                  isShared={isSharedView}
                   onToggleSelection={(e) => handleToggleSelection(drawing.id, e)}
                   onRename={handleRenameDrawing}
                   onDelete={handleDeleteDrawing}

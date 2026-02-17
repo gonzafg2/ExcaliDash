@@ -1,12 +1,27 @@
 import express from "express";
 import { Prisma } from "../../generated/client";
 import { DashboardRouteDeps, SortDirection, SortField } from "./types";
+import { config as globalConfig } from "../../config";
+import crypto from "crypto";
 import {
   getUserTrashCollectionId,
   isTrashCollectionId,
   toInternalTrashCollectionId,
   toPublicTrashCollectionId,
 } from "./trash";
+import {
+  buildShareLinkToken,
+  canEditDrawing,
+  canViewDrawing,
+  getDrawingAccess,
+  getSharePrincipalFromRequest,
+  hashShareLinkToken,
+  isOwnerAccess,
+  issueShareSessionToken,
+  normalizeDrawingPermission,
+  SHARE_SESSION_COOKIE_NAME,
+  type DrawingPrincipal,
+} from "../../authz/sharing";
 
 export const registerDrawingRoutes = (
   app: express.Express,
@@ -15,6 +30,7 @@ export const registerDrawingRoutes = (
   const {
     prisma,
     requireAuth,
+    optionalAuth,
     asyncHandler,
     parseJsonField,
     validateImportedDrawing,
@@ -30,6 +46,61 @@ export const registerDrawingRoutes = (
     config,
     logAuditEvent,
   } = deps;
+
+  const getRequestPrincipal = async (
+    req: express.Request
+  ): Promise<DrawingPrincipal | null> => {
+    if (req.user?.id) {
+      return { kind: "user", userId: req.user.id };
+    }
+    return getSharePrincipalFromRequest({
+      prisma,
+      req: { headers: { cookie: req.headers.cookie } },
+      jwtSecret: globalConfig.jwtSecret,
+    });
+  };
+
+  const setShareSessionCookie = (req: express.Request, res: express.Response, token: string, expiresAt: Date) => {
+    const trustProxy = req.app?.get?.("trust proxy");
+    const canTrustProxyHeaders =
+      trustProxy === true ||
+      (typeof trustProxy === "number" && trustProxy > 0) ||
+      typeof trustProxy === "function";
+    const forwardedProto = req.headers["x-forwarded-proto"];
+    const rawForwarded = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto;
+    const firstHop = String(rawForwarded || "").split(",")[0].trim().toLowerCase();
+    const requestUsesHttps = Boolean(req.secure) || (canTrustProxyHeaders && firstHop === "https");
+    const forceSecureInProduction = config.nodeEnv === "production";
+    res.cookie(SHARE_SESSION_COOKIE_NAME, token, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: forceSecureInProduction ? true : requestUsesHttps,
+      path: "/",
+      expires: expiresAt,
+    });
+  };
+
+  const resolveDefaultTtlMs = (permission: "view" | "edit"): number => {
+    const raw =
+      permission === "edit"
+        ? process.env.LINK_SHARE_EDIT_DEFAULT_TTL_MS
+        : process.env.LINK_SHARE_VIEW_DEFAULT_TTL_MS;
+    const parsed = raw ? Number(raw) : NaN;
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    return permission === "edit" ? 7 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000;
+  };
+
+  const resolveMaxTtlMs = (): number => {
+    const parsed = Number(process.env.LINK_SHARE_MAX_TTL_MS);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    return 90 * 24 * 60 * 60 * 1000;
+  };
+
+  const resolveSessionTtlMs = (): number => {
+    const parsed = Number(process.env.LINK_SHARE_SESSION_TTL_MS);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    return 12 * 60 * 60 * 1000;
+  };
 
   app.get("/drawings", requireAuth, asyncHandler(async (req, res) => {
     if (!req.user) {
@@ -169,26 +240,142 @@ export const registerDrawingRoutes = (
     return res.send(body);
   }));
 
-  app.get("/drawings/:id", requireAuth, asyncHandler(async (req, res) => {
+  // Shared with me list (does not mix into /drawings cache semantics)
+  // Must be registered before `/drawings/:id` so it doesn't get treated as a drawing id.
+  app.get("/drawings/shared", requireAuth, asyncHandler(async (req, res) => {
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
 
-    const { id } = req.params;
-    const drawing = await prisma.drawing.findFirst({
-      where: {
-        id,
-        userId: req.user.id,
+    const { search, includeData, limit, offset, sortField, sortDirection } = req.query;
+    const searchTerm =
+      typeof search === "string" && search.trim().length > 0 ? search.trim() : undefined;
+
+    const shouldIncludeData =
+      typeof includeData === "string"
+        ? includeData.toLowerCase() === "true" || includeData === "1"
+        : false;
+    const parsedSortField: SortField =
+      sortField === "name" || sortField === "createdAt" || sortField === "updatedAt"
+        ? sortField
+        : "updatedAt";
+    const parsedSortDirection: SortDirection =
+      sortDirection === "asc" || sortDirection === "desc"
+        ? sortDirection
+        : parsedSortField === "name"
+        ? "asc"
+        : "desc";
+
+    const rawLimit = limit ? Number.parseInt(limit as string, 10) : undefined;
+    const rawOffset = offset ? Number.parseInt(offset as string, 10) : undefined;
+    const parsedLimit =
+      rawLimit !== undefined && Number.isFinite(rawLimit)
+        ? Math.min(Math.max(rawLimit, 1), MAX_PAGE_SIZE)
+        : undefined;
+    const parsedOffset =
+      rawOffset !== undefined && Number.isFinite(rawOffset) ? Math.max(rawOffset, 0) : undefined;
+
+    const orderBy: Prisma.DrawingOrderByWithRelationInput =
+      parsedSortField === "name"
+        ? { name: parsedSortDirection }
+        : parsedSortField === "createdAt"
+        ? { createdAt: parsedSortDirection }
+        : { updatedAt: parsedSortDirection };
+
+    const whereDrawing: Prisma.DrawingWhereInput = {
+      // "Shared with me" should only include drawings owned by someone else.
+      // Some deployments keep an owner self-permission row for access control; exclude those.
+      userId: { not: req.user.id },
+      permissions: {
+        some: {
+          granteeUserId: req.user.id,
+        },
       },
+    };
+    if (searchTerm) {
+      whereDrawing.name = { contains: searchTerm };
+    }
+
+    const summarySelect: Prisma.DrawingSelect = {
+      id: true,
+      name: true,
+      collectionId: true,
+      preview: true,
+      version: true,
+      createdAt: true,
+      updatedAt: true,
+      userId: true,
+      permissions: {
+        where: { granteeUserId: req.user.id },
+        select: { permission: true },
+      },
+    };
+
+    const queryOptions: Prisma.DrawingFindManyArgs = { where: whereDrawing, orderBy };
+    if (parsedLimit !== undefined) queryOptions.take = parsedLimit;
+    if (parsedOffset !== undefined) queryOptions.skip = parsedOffset;
+    if (!shouldIncludeData) queryOptions.select = summarySelect;
+
+    const [drawings, totalCount] = await Promise.all([
+      prisma.drawing.findMany(queryOptions),
+      prisma.drawing.count({ where: whereDrawing }),
+    ]);
+
+    const normalize = (d: any) => {
+      const rawPerm = Array.isArray(d?.permissions) ? d.permissions[0]?.permission : null;
+      const perm = normalizeDrawingPermission(rawPerm) ?? "view";
+      const { permissions: _permissions, ...rest } = d;
+      return {
+        ...rest,
+        // Shared drawings do not participate in trash mapping for the viewer; keep null/ids as-is.
+        collectionId: d.collectionId ?? null,
+        accessLevel: perm,
+      };
+    };
+
+    let responsePayload: any[] = drawings as any[];
+    if (shouldIncludeData) {
+      responsePayload = (drawings as any[]).map((d: any) => {
+        const normalized = normalize(d);
+        return {
+          ...normalized,
+          elements: parseJsonField(d.elements, []),
+          appState: parseJsonField(d.appState, {}),
+          files: parseJsonField(d.files, {}),
+        };
+      });
+    } else {
+      responsePayload = (drawings as any[]).map((d: any) => normalize(d));
+    }
+
+    return res.json({
+      drawings: responsePayload,
+      totalCount,
+      limit: parsedLimit,
+      offset: parsedOffset,
     });
+  }));
+
+  app.get("/drawings/:id", optionalAuth, asyncHandler(async (req, res) => {
+    const principal = await getRequestPrincipal(req);
+
+    const { id } = req.params;
+    const access = await getDrawingAccess({ prisma, principal, drawingId: id });
+    if (!canViewDrawing(access)) {
+      return res.status(404).json({ error: "Drawing not found", message: "Drawing does not exist" });
+    }
+
+    const drawing = await prisma.drawing.findUnique({ where: { id } });
     if (!drawing) {
       return res.status(404).json({ error: "Drawing not found", message: "Drawing does not exist" });
     }
 
+    const userIdForTrash = principal?.kind === "user" ? principal.userId : drawing.userId;
     return res.json({
       ...drawing,
-      collectionId: toPublicTrashCollectionId(drawing.collectionId, req.user.id),
+      collectionId: toPublicTrashCollectionId(drawing.collectionId, userIdForTrash),
       elements: parseJsonField(drawing.elements, []),
       appState: parseJsonField(drawing.appState, {}),
       files: parseJsonField(drawing.files, {}),
+      accessLevel: access,
     });
   }));
 
@@ -252,13 +439,16 @@ export const registerDrawingRoutes = (
     });
   }));
 
-  app.put("/drawings/:id", requireAuth, asyncHandler(async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+  app.put("/drawings/:id", optionalAuth, asyncHandler(async (req, res) => {
+    const principal = await getRequestPrincipal(req);
 
     const { id } = req.params;
-    const existingDrawing = await prisma.drawing.findFirst({
-      where: { id, userId: req.user.id },
-    });
+    const access = await getDrawingAccess({ prisma, principal, drawingId: id });
+    if (!canEditDrawing(access)) {
+      return res.status(404).json({ error: "Drawing not found" });
+    }
+
+    const existingDrawing = await prisma.drawing.findUnique({ where: { id } });
     if (!existingDrawing) return res.status(404).json({ error: "Drawing not found" });
 
     const parsed = drawingUpdateSchema.safeParse(req.body);
@@ -278,7 +468,8 @@ export const registerDrawingRoutes = (
       files?: Record<string, unknown>;
       version?: number;
     };
-    const trashCollectionId = getUserTrashCollectionId(req.user.id);
+    const ownerUserId = existingDrawing.userId;
+    const trashCollectionId = getUserTrashCollectionId(ownerUserId);
     const isSceneUpdate =
       payload.elements !== undefined ||
       payload.appState !== undefined ||
@@ -294,12 +485,18 @@ export const registerDrawingRoutes = (
     if (payload.preview !== undefined) data.preview = payload.preview;
 
     if (payload.collectionId !== undefined) {
+      if (!isOwnerAccess(access)) {
+        return res.status(403).json({
+          error: "Forbidden",
+          message: "Only the owner can move drawings between collections",
+        });
+      }
       if (payload.collectionId === "trash") {
-        await ensureTrashCollection(prisma, req.user.id);
+        await ensureTrashCollection(prisma, ownerUserId);
         (data as Prisma.DrawingUncheckedUpdateInput).collectionId = trashCollectionId;
       } else if (payload.collectionId) {
         const collection = await prisma.collection.findFirst({
-          where: { id: payload.collectionId, userId: req.user.id },
+          where: { id: payload.collectionId, userId: ownerUserId },
         });
         if (!collection) return res.status(404).json({ error: "Collection not found" });
         (data as Prisma.DrawingUncheckedUpdateInput).collectionId = payload.collectionId;
@@ -308,7 +505,7 @@ export const registerDrawingRoutes = (
       }
     }
 
-    const updateWhere: Prisma.DrawingWhereInput = { id, userId: req.user.id };
+    const updateWhere: Prisma.DrawingWhereInput = { id };
     if (isSceneUpdate && payload.version !== undefined) {
       updateWhere.version = payload.version;
     }
@@ -320,7 +517,7 @@ export const registerDrawingRoutes = (
     if (updateResult.count === 0) {
       if (isSceneUpdate && payload.version !== undefined) {
         const latestDrawing = await prisma.drawing.findFirst({
-          where: { id, userId: req.user.id },
+          where: { id },
           select: { version: true },
         });
         return res.status(409).json({
@@ -334,7 +531,7 @@ export const registerDrawingRoutes = (
     }
 
     const updatedDrawing = await prisma.drawing.findFirst({
-      where: { id, userId: req.user.id },
+      where: { id },
     });
     if (!updatedDrawing) {
       return res.status(404).json({ error: "Drawing not found" });
@@ -343,10 +540,11 @@ export const registerDrawingRoutes = (
 
     return res.json({
       ...updatedDrawing,
-      collectionId: toPublicTrashCollectionId(updatedDrawing.collectionId, req.user.id),
+      collectionId: toPublicTrashCollectionId(updatedDrawing.collectionId, ownerUserId),
       elements: parseJsonField(updatedDrawing.elements, []),
       appState: parseJsonField(updatedDrawing.appState, {}),
       files: parseJsonField(updatedDrawing.files, {}),
+      accessLevel: access,
     });
   }));
 
@@ -411,5 +609,332 @@ export const registerDrawingRoutes = (
       appState: parseJsonField(newDrawing.appState, {}),
       files: parseJsonField(newDrawing.files, {}),
     });
+  }));
+
+  // Owner-only: resolve users by name/email in the context of a drawing you own (reduces enumeration risk).
+  app.get("/drawings/:id/share-resolve", requireAuth, asyncHandler(async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+
+    const { id } = req.params;
+    const qRaw = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    const q = qRaw.toLowerCase();
+    if (q.length < 3) return res.json({ users: [] });
+
+    const drawing = await prisma.drawing.findUnique({ where: { id }, select: { userId: true } });
+    if (!drawing || drawing.userId !== req.user.id) {
+      return res.status(404).json({ error: "Drawing not found" });
+    }
+
+    const users = await prisma.user.findMany({
+      where: {
+        isActive: true,
+        id: { not: req.user.id },
+        OR: [
+          { email: { contains: q } },
+          { name: { contains: q } },
+          { username: { contains: q } },
+        ],
+      },
+      select: { id: true, name: true, email: true },
+      take: 10,
+    });
+
+    return res.json({ users });
+  }));
+
+  app.get("/drawings/:id/sharing", requireAuth, asyncHandler(async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    const { id } = req.params;
+
+    const drawing = await prisma.drawing.findUnique({ where: { id }, select: { userId: true } });
+    if (!drawing || drawing.userId !== req.user.id) {
+      return res.status(404).json({ error: "Drawing not found" });
+    }
+
+    const [permissions, linkShares] = await Promise.all([
+      prisma.drawingPermission.findMany({
+        where: { drawingId: id },
+        select: {
+          id: true,
+          granteeUserId: true,
+          permission: true,
+          createdAt: true,
+          updatedAt: true,
+          granteeUser: { select: { id: true, name: true, email: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.drawingLinkShare.findMany({
+        where: { drawingId: id },
+        select: {
+          id: true,
+          permission: true,
+          expiresAt: true,
+          revokedAt: true,
+          createdAt: true,
+          updatedAt: true,
+          lastUsedAt: true,
+        },
+        orderBy: { createdAt: "desc" },
+      }),
+    ]);
+
+    return res.json({ permissions, linkShares });
+  }));
+
+  app.post("/drawings/:id/permissions", requireAuth, asyncHandler(async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    const { id } = req.params;
+
+    const drawing = await prisma.drawing.findUnique({ where: { id }, select: { userId: true } });
+    if (!drawing || drawing.userId !== req.user.id) {
+      return res.status(404).json({ error: "Drawing not found" });
+    }
+
+    const granteeUserId = typeof req.body?.granteeUserId === "string" ? req.body.granteeUserId : null;
+    const permission = normalizeDrawingPermission(req.body?.permission);
+    if (!granteeUserId || !permission) {
+      return res.status(400).json({ error: "Validation error", message: "Invalid grantee or permission" });
+    }
+    if (granteeUserId === req.user.id) {
+      return res.status(400).json({ error: "Validation error", message: "Cannot share with yourself" });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: granteeUserId },
+      select: { id: true, isActive: true },
+    });
+    if (!user || !user.isActive) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const saved = await prisma.drawingPermission.upsert({
+      where: {
+        drawingId_granteeUserId: { drawingId: id, granteeUserId },
+      },
+      update: { permission, createdByUserId: req.user.id },
+      create: { drawingId: id, granteeUserId, permission, createdByUserId: req.user.id },
+      select: {
+        id: true,
+        granteeUserId: true,
+        permission: true,
+        createdAt: true,
+        updatedAt: true,
+        granteeUser: { select: { id: true, name: true, email: true } },
+      },
+    });
+
+    invalidateDrawingsCache();
+
+    if (config.enableAuditLogging) {
+      await logAuditEvent({
+        userId: req.user.id,
+        action: "drawing_shared_user_upsert",
+        resource: `drawing:${id}`,
+        ipAddress: req.ip || req.connection.remoteAddress || undefined,
+        userAgent: req.headers["user-agent"] || undefined,
+        details: { drawingId: id, granteeUserId, permission },
+      });
+    }
+
+    return res.json({ permission: saved });
+  }));
+
+  app.delete("/drawings/:id/permissions/:permId", requireAuth, asyncHandler(async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    const { id, permId } = req.params;
+
+    const drawing = await prisma.drawing.findUnique({ where: { id }, select: { userId: true } });
+    if (!drawing || drawing.userId !== req.user.id) {
+      return res.status(404).json({ error: "Drawing not found" });
+    }
+
+    await prisma.drawingPermission.deleteMany({
+      where: { id: permId, drawingId: id },
+    });
+    invalidateDrawingsCache();
+
+    if (config.enableAuditLogging) {
+      await logAuditEvent({
+        userId: req.user.id,
+        action: "drawing_shared_user_revoke",
+        resource: `drawing:${id}`,
+        ipAddress: req.ip || req.connection.remoteAddress || undefined,
+        userAgent: req.headers["user-agent"] || undefined,
+        details: { drawingId: id, permissionId: permId },
+      });
+    }
+
+    return res.json({ success: true });
+  }));
+
+  app.post("/drawings/:id/link-shares", requireAuth, asyncHandler(async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    const { id } = req.params;
+
+    const drawing = await prisma.drawing.findUnique({ where: { id }, select: { userId: true } });
+    if (!drawing || drawing.userId !== req.user.id) {
+      return res.status(404).json({ error: "Drawing not found" });
+    }
+
+    const permission = normalizeDrawingPermission(req.body?.permission);
+    if (!permission) {
+      return res.status(400).json({ error: "Validation error", message: "Invalid permission" });
+    }
+
+    const rawExpiresAt = typeof req.body?.expiresAt === "string" ? req.body.expiresAt : null;
+    const expiresAtText = (rawExpiresAt || "").trim();
+    const requestedExpiresAt = expiresAtText.length > 0 ? new Date(expiresAtText) : null;
+    const hasValidRequestedExpiry = Boolean(requestedExpiresAt && Number.isFinite(requestedExpiresAt.getTime()));
+
+    const now = Date.now();
+    const maxTtlMs = resolveMaxTtlMs();
+    const defaultTtlMs = resolveDefaultTtlMs(permission);
+
+    let expiresAt: Date | null = null;
+    // View links can be truly non-expiring unless an explicit expiry is provided.
+    // Edit links default to an expiry window when none is provided.
+    if (permission === "view" && !hasValidRequestedExpiry && expiresAtText.length === 0) {
+      expiresAt = null;
+    } else {
+      const candidateTtlMs = hasValidRequestedExpiry && requestedExpiresAt
+        ? requestedExpiresAt.getTime() - now
+        : defaultTtlMs;
+      const ttlMs = Math.min(Math.max(candidateTtlMs, 60_000), maxTtlMs);
+      expiresAt = new Date(now + ttlMs);
+    }
+
+    // Passphrase support is currently disabled. We keep passphraseHash nullable for backwards compatibility.
+    const passphraseHashValue: string | null = null;
+
+    // Enforce a single active "anyone with the link" policy per drawing. The public link is the drawing id,
+    // so multiple active link-share rows would be confusing and could unintentionally widen access.
+    await prisma.drawingLinkShare.updateMany({
+      where: { drawingId: id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+
+    const token = buildShareLinkToken();
+    const tokenHash = hashShareLinkToken(token);
+
+    const created = await prisma.drawingLinkShare.create({
+      data: {
+        drawingId: id,
+        permission,
+        tokenHash,
+        passphraseHash: passphraseHashValue,
+        expiresAt,
+        createdByUserId: req.user.id,
+      },
+      select: {
+        id: true,
+        permission: true,
+        expiresAt: true,
+        revokedAt: true,
+        createdAt: true,
+      },
+    });
+
+    if (config.enableAuditLogging) {
+      await logAuditEvent({
+        userId: req.user.id,
+        action: "drawing_link_share_created",
+        resource: `drawing:${id}`,
+        ipAddress: req.ip || req.connection.remoteAddress || undefined,
+        userAgent: req.headers["user-agent"] || undefined,
+        details: { drawingId: id, permission, expiresAt: expiresAt ? expiresAt.toISOString() : null },
+      });
+    }
+
+    return res.json({ share: created, token });
+  }));
+
+  app.delete("/drawings/:id/link-shares/:shareId", requireAuth, asyncHandler(async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    const { id, shareId } = req.params;
+
+    const drawing = await prisma.drawing.findUnique({ where: { id }, select: { userId: true } });
+    if (!drawing || drawing.userId !== req.user.id) {
+      return res.status(404).json({ error: "Drawing not found" });
+    }
+
+    await prisma.drawingLinkShare.updateMany({
+      where: { id: shareId, drawingId: id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+
+    if (config.enableAuditLogging) {
+      await logAuditEvent({
+        userId: req.user.id,
+        action: "drawing_link_share_revoked",
+        resource: `drawing:${id}`,
+        ipAddress: req.ip || req.connection.remoteAddress || undefined,
+        userAgent: req.headers["user-agent"] || undefined,
+        details: { drawingId: id, shareId },
+      });
+    }
+
+    return res.json({ success: true });
+  }));
+
+  // Link exchange: token -> httpOnly share session cookie
+  app.post("/shares/exchange", optionalAuth, asyncHandler(async (req, res) => {
+    const drawingId = typeof req.body?.drawingId === "string" ? req.body.drawingId : null;
+    const token = typeof req.body?.token === "string" ? req.body.token : null;
+
+    if (!drawingId || !token) {
+      return res.status(400).json({ error: "Validation error", message: "Missing drawingId or token" });
+    }
+
+    const tokenHash = hashShareLinkToken(token);
+    const share = await prisma.drawingLinkShare.findFirst({
+      where: { tokenHash },
+      select: {
+        id: true,
+        drawingId: true,
+        permission: true,
+        revokedAt: true,
+        expiresAt: true,
+        failedAttempts: true,
+        lockedUntil: true,
+      },
+    });
+
+    if (!share || share.drawingId !== drawingId || share.revokedAt) {
+      return res.status(404).json({ error: "Not found", message: "Share link is invalid" });
+    }
+    if (share.expiresAt && share.expiresAt.getTime() <= Date.now()) {
+      return res.status(410).json({ error: "Expired", message: "Share link has expired" });
+    }
+
+    const permission = normalizeDrawingPermission(share.permission) ?? "view";
+
+    await prisma.drawingLinkShare.update({
+      where: { id: share.id },
+      data: {
+        failedAttempts: 0,
+        lockedUntil: null,
+        lastUsedAt: new Date(),
+        lastUsedIp: (req.ip || req.connection.remoteAddress || "unknown").slice(0, 255),
+      },
+    });
+
+    const sessionTtlMs = resolveSessionTtlMs();
+    const sessionExpiresAt = new Date(Date.now() + sessionTtlMs);
+    const linkExpiresAt = share.expiresAt ?? null;
+    const finalExpiry =
+      linkExpiresAt && linkExpiresAt.getTime() < sessionExpiresAt.getTime()
+        ? linkExpiresAt
+        : sessionExpiresAt;
+    const tokenValue = issueShareSessionToken({
+      jwtSecret: globalConfig.jwtSecret,
+      shareId: share.id,
+      drawingId,
+      permission,
+      expiresAt: finalExpiry,
+    });
+    setShareSessionCookie(req, res, tokenValue, finalExpiry);
+
+    return res.json({ success: true, permission, expiresAt: finalExpiry.toISOString() });
   }));
 };

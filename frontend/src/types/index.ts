@@ -6,6 +6,7 @@ export interface DrawingSummary {
   createdAt: number;
   version: number;
   preview?: string | null;
+  accessLevel?: "none" | "view" | "edit" | "owner";
 }
 
 export interface Drawing extends DrawingSummary {

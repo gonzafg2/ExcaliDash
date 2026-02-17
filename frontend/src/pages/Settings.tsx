@@ -519,7 +519,7 @@ export const Settings: React.FC = () => {
                         <input
                             type="file"
                             multiple
-                            accept=".sqlite,.db,.json,.excalidraw"
+                            accept=".sqlite,.db,.json,.excalidraw,.zip"
                             className="hidden"
                             id="settings-import-legacy"
                             onChange={async (e) => {

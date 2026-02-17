@@ -55,6 +55,16 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
       const returnTo = `${location.pathname}${location.search}${location.hash}`;
       return <OidcRedirect returnTo={returnTo} />;
     }
+
+    // Allow sharing the "normal" editor URL: if someone opens `/editor/:id` without being signed in,
+    // bounce them to the public editor route (`/shared/:id`), where backend link-sharing policy applies.
+    if (location.pathname.startsWith("/editor/")) {
+      const id = location.pathname.slice("/editor/".length).split("/")[0] || "";
+      if (id) {
+        return <Navigate to={`/shared/${id}${location.search}${location.hash}`} replace />;
+      }
+    }
+
     return <Navigate to="/login" replace />;
   }
 

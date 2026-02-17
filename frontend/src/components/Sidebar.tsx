@@ -200,6 +200,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
 
             <SidebarItem
+              id={"shared"}
+              icon={<Shield size={18} />}
+              label="Shared with me"
+              isActive={selectedCollectionId === "shared"}
+              onClick={() => onSelectCollection("shared")}
+            />
+
+            <SidebarItem
               id={null}
               icon={<Archive size={18} />}
               label="Unorganized"
