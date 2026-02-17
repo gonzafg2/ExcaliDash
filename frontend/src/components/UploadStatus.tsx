@@ -4,15 +4,43 @@ import { Loader2, CheckCircle2, AlertCircle, X, ChevronUp, ChevronDown } from 'l
 import clsx from 'clsx';
 
 export const UploadStatus: React.FC = () => {
-  const { tasks, clearCompleted, removeTask, isUploading } = useUpload();
+  const { tasks, clearCompleted, clearSuccessful, removeTask, isUploading } = useUpload();
   const [isOpen, setIsOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const autoClearTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (isUploading) {
       setIsOpen(true);
     }
   }, [isUploading]);
+
+  const hasActive = tasks.some(t => t.status === 'pending' || t.status === 'uploading' || t.status === 'processing');
+  const hasSuccess = tasks.some(t => t.status === 'success');
+  const hasErrors = tasks.some(t => t.status === 'error');
+
+  useEffect(() => {
+    if (autoClearTimerRef.current) {
+      window.clearTimeout(autoClearTimerRef.current);
+      autoClearTimerRef.current = null;
+    }
+
+    // When everything finishes successfully, auto-dismiss the indicator.
+    // If there are errors, keep them visible but still clear successes after a short delay.
+    if (!hasActive && hasSuccess) {
+      autoClearTimerRef.current = window.setTimeout(() => {
+        clearSuccessful();
+        if (!hasErrors) setIsOpen(false);
+      }, hasErrors ? 5000 : 1200);
+    }
+
+    return () => {
+      if (autoClearTimerRef.current) {
+        window.clearTimeout(autoClearTimerRef.current);
+        autoClearTimerRef.current = null;
+      }
+    };
+  }, [hasActive, hasSuccess, hasErrors, clearSuccessful]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -31,7 +59,7 @@ export const UploadStatus: React.FC = () => {
 
   if (tasks.length === 0) return null;
 
-  const activeCount = tasks.filter(t => t.status === 'uploading' || t.status === 'processing').length;
+  const activeCount = tasks.filter(t => t.status === 'pending' || t.status === 'uploading' || t.status === 'processing').length;
   const completedCount = tasks.filter(t => t.status === 'success').length;
   const errorCount = tasks.filter(t => t.status === 'error').length;
 
@@ -53,7 +81,7 @@ export const UploadStatus: React.FC = () => {
             )}
           </div>
           
-          <div className="max-h-60 overflow-y-auto custom-scrollbar p-1">
+          <div className="max-h-60 overflow-y-auto no-scrollbar p-1">
             {tasks.map((task) => (
               <div key={task.id} className="group flex items-center gap-3 p-2 hover:bg-slate-50 dark:hover:bg-neutral-800 rounded-lg transition-colors">
                 <div className="flex-shrink-0">

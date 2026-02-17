@@ -9,6 +9,12 @@ dist
 *.log
 prisma/dev.db
 prisma/dev.db-journal
+prisma/**/*.db
+prisma/**/*.db-journal
+prisma/**/*.db-wal
+prisma/**/*.db-shm
+prisma/**/*.db.backup
+prisma/**/*.backup
 src/generated
 coverage
 *.test.ts

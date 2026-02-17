@@ -23,6 +23,17 @@ html.dark body {
   background-image: radial-gradient(#262626 1px, transparent 1px);
 }
 
+.no-scrollbar {
+  /* Hide scrollbars but keep scrolling (Chrome/Safari/Firefox). */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge Legacy */
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
 @font-face {
   font-family: 'Excalifont';
   src: url('./assets/fonts/Excalifont-Regular.woff2') format('woff2');

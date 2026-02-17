@@ -50,17 +50,19 @@ fi
 
 export CSRF_SECRET
 
-# 1. Hydrate volume if empty (Running as root)
+# 1. Ensure schema and migrations are present (Running as root)
+# Never copy the entire prisma directory, as that can unintentionally overwrite
+# persisted SQLite files or copy stray *.db artifacts into the volume.
 if [ ! -f "/app/prisma/schema.prisma" ]; then
-    echo "Mount is empty. Hydrating /app/prisma..."
-    cp -R /app/prisma_template/. /app/prisma/
+    echo "Mount appears empty (missing schema.prisma). Bootstrapping schema and migrations..."
 else
-    # Volume exists but may be missing new migrations from an upgrade
-    # Always sync schema and migrations from template to ensure upgrades work
+    # Volume exists but may be missing new migrations from an upgrade.
     echo "Syncing schema and migrations from template..."
-    cp /app/prisma_template/schema.prisma /app/prisma/schema.prisma
-    cp -R /app/prisma_template/migrations/. /app/prisma/migrations/
 fi
+
+mkdir -p /app/prisma/migrations
+cp /app/prisma_template/schema.prisma /app/prisma/schema.prisma
+cp -R /app/prisma_template/migrations/. /app/prisma/migrations/
 
 # 2. Fix permissions unconditionally (Running as root)
 echo "Fixing filesystem permissions..."

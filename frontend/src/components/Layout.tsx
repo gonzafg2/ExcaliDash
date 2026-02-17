@@ -127,7 +127,7 @@ export const Layout: React.FC<LayoutProps> = ({
               </div>
             </div>
 
-            <div className="flex-1 min-w-0 overflow-y-auto">
+            <div className="flex-1 min-w-0 overflow-y-auto no-scrollbar">
               <div className="w-full mx-auto p-4 sm:p-6 lg:p-8 min-h-full">
                 <UpdateBanner />
                 <ImpersonationBanner />
@@ -196,7 +196,7 @@ export const Layout: React.FC<LayoutProps> = ({
               <div className="absolute inset-y-0 -left-0.5 -right-0.5 bg-transparent hover:bg-indigo-500/10 dark:hover:bg-indigo-400/10 transition-colors duration-150" />
             </div>
           </aside>
-          <main className="flex-1 min-w-0 bg-white/40 dark:bg-neutral-900/40 backdrop-blur-sm rounded-2xl border border-white/50 dark:border-neutral-800/50 shadow-sm h-full transition-colors duration-200 overflow-y-auto">
+          <main className="flex-1 min-w-0 bg-white/40 dark:bg-neutral-900/40 backdrop-blur-sm rounded-2xl border border-white/50 dark:border-neutral-800/50 shadow-sm h-full transition-colors duration-200 overflow-y-auto no-scrollbar">
             <div className="w-full mx-auto p-4 sm:p-6 lg:p-8 min-h-full">
               <UpdateBanner />
               <ImpersonationBanner />
