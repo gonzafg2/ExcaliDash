@@ -570,9 +570,15 @@ app.get("/health", (req, res) => {
 // If auth onboarding is pending, block all app API routes so users are forced onto the
 // v0.4+ UI to complete "Choose Authentication Mode" before interacting with data.
 //
-// This is intentionally strict: it prevents users from continuing to use pre-auth UI
-// behavior while the instance is in an undefined onboarding state.
-if (config.authMode === "local") {
+// This is intentionally strict in production: it prevents users from continuing to use
+// pre-auth UI behavior while the instance is in an undefined onboarding state.
+// Disabled in tests/dev to avoid interfering with integration tests and local workflows.
+const enableOnboardingGate =
+  config.authMode === "local" &&
+  config.nodeEnv === "production" &&
+  process.env.DISABLE_ONBOARDING_GATE !== "true";
+
+if (enableOnboardingGate) {
   const ONBOARDING_GATE_TTL_MS = 5_000;
   let onboardingGateCache:
     | { required: boolean; fetchedAt: number }
