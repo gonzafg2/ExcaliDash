@@ -25,8 +25,17 @@ const REFRESH_TOKEN_COOKIE_MAX_AGE_MS = parseDurationToMs(
   DEFAULT_REFRESH_TTL_MS
 );
 
+const canTrustProxyHeaders = (req: Request): boolean => {
+  const trustProxy = req.app?.get?.("trust proxy");
+  if (trustProxy === true) return true;
+  if (typeof trustProxy === "number") return trustProxy > 0;
+  if (typeof trustProxy === "function") return true;
+  return false;
+};
+
 const requestUsesHttps = (req: Request): boolean => {
   if (req.secure) return true;
+  if (!canTrustProxyHeaders(req)) return false;
   const forwardedProto = req.headers["x-forwarded-proto"];
   const raw = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto;
   const firstHop = String(raw || "")

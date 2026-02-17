@@ -28,8 +28,17 @@ export const registerCsrfProtection = ({
   maxRequestsPerWindow,
   enableDebugLogging,
 }: RegisterCsrfProtectionDeps) => {
+  const canTrustProxyHeaders = (req: express.Request): boolean => {
+    const trustProxy = req.app.get("trust proxy");
+    if (trustProxy === true) return true;
+    if (typeof trustProxy === "number") return trustProxy > 0;
+    if (typeof trustProxy === "function") return true;
+    return false;
+  };
+
   const requestUsesHttps = (req: express.Request): boolean => {
     if (req.secure) return true;
+    if (!canTrustProxyHeaders(req)) return false;
     const forwardedProto = req.headers["x-forwarded-proto"];
     const raw = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto;
     const firstHop = String(raw || "")

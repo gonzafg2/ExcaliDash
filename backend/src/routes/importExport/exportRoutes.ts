@@ -113,8 +113,29 @@ export const registerExcalidashExportRoute = (deps: RegisterImportExportDeps) =>
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
 
     const archive = archiver("zip", { zlib: { level: 9 } });
+    const abortArchive = () => {
+      try {
+        archive.abort();
+      } catch {
+        // ignore
+      }
+    };
+
+    // If the client disconnects mid-stream, stop any further work.
+    res.on("close", () => {
+      if (res.writableEnded) return;
+      abortArchive();
+    });
+
     archive.on("error", (err) => {
       console.error("Archive error:", err);
+      abortArchive();
+
+      // If we've already started streaming, we can't reliably send JSON.
+      if (res.headersSent) {
+        res.destroy(err instanceof Error ? err : undefined);
+        return;
+      }
       res.status(500).json({ error: "Failed to create archive" });
     });
     archive.pipe(res);
