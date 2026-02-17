@@ -3,7 +3,7 @@ import { Layout } from '../components/Layout';
 import { useNavigate } from 'react-router-dom';
 import * as api from '../api';
 import type { Collection } from '../types';
-import { Upload, Moon, Sun, Info, Archive, RefreshCw, ExternalLink, Check } from 'lucide-react';
+import { Upload, Moon, Sun, Info, Archive, RefreshCw, Check } from 'lucide-react';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { importLegacyFiles } from '../utils/importUtils';
 import { useTheme } from '../context/ThemeContext';
