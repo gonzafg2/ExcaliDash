@@ -962,7 +962,7 @@ export const Dashboard: React.FC = () => {
         ) : (
           <div
             className={clsx("grid gap-3 sm:gap-4 pb-16 sm:pb-24 transition-all duration-300", isDraggingFile && "opacity-20 blur-sm")}
-            style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}
+            style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}
           >
             {sortedDrawings.length === 0 ? (
               <div className="col-span-full flex flex-col items-center justify-center py-16 sm:py-32 text-slate-400 dark:text-neutral-500 border-2 border-dashed border-slate-200 dark:border-neutral-700 rounded-3xl bg-slate-50/50 dark:bg-neutral-800/50">
