@@ -111,7 +111,6 @@ describe("system/update logic", () => {
     mod.__resetUpdateCacheForTests();
     const r1 = await mod.fetchLatest("stable");
 
-    // Force the second call down the conditional-request path (bypass TTL short-circuit).
     mod.__setUpdateTtlForTests(0);
     const r2 = await mod.fetchLatest("stable");
 

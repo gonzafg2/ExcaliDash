@@ -104,9 +104,6 @@ const nodeEnv = process.env.NODE_ENV || "development";
     );
   }
 
-  // Keep migration history authoritative to avoid drift between db push and deploy.
-  // Includes a self-heal path for the known duplicate-column failure on
-  // 20260210153000_add_auth_onboarding_completed in local dev databases.
   if (nodeEnv !== "production") {
     const runDeploy = () =>
       execSync("npx prisma migrate deploy", {
@@ -250,9 +247,6 @@ const nodeEnv = process.env.NODE_ENV || "development";
         return;
       }
 
-      // Migration simulation:
-      // 1) Reassign existing data ownership to bootstrap user
-      // 2) Ensure at least one drawing+collection exists so UI shows migration messaging
       await tx.collection.updateMany({
         data: { userId: BOOTSTRAP_USER_ID },
       });

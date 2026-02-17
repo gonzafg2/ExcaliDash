@@ -19,20 +19,17 @@ const waitForBackend = async () => {
 };
 
 const getSetCookiePairs = (headers: Headers): string => {
-  // Node fetch collapses multiple Set-Cookie headers, but it preserves them via getSetCookie()
-  // in Node 20+. We support both representations.
   const anyHeaders = headers as unknown as { getSetCookie?: () => string[] };
   const fromGetter = typeof anyHeaders.getSetCookie === "function" ? anyHeaders.getSetCookie() : [];
   const raw = fromGetter.length > 0 ? fromGetter : [headers.get("set-cookie") || ""];
   const cookiePairs = raw
-    .flatMap((v) => String(v || "").split(/,(?=[^;]+=[^;]+)/g)) // best-effort split
+    .flatMap((v) => String(v || "").split(/,(?=[^;]+=[^;]+)/g))
     .map((v) => v.split(";")[0]?.trim() || "")
     .filter(Boolean);
   return cookiePairs.join("; ");
 };
 
 const completeAuthOnboardingIfNeeded = async () => {
-  // Fast probe: if status says onboarding not required, do nothing.
   try {
     const statusResp = await fetch(`${API_URL}/auth/status`);
     if (statusResp.ok) {
@@ -40,7 +37,6 @@ const completeAuthOnboardingIfNeeded = async () => {
       if (!status?.authOnboardingRequired) return;
     }
   } catch {
-    // fall through to attempt completion after health check
   }
 
   const csrfResp = await fetch(`${API_URL}/csrf-token`);
@@ -65,7 +61,6 @@ const completeAuthOnboardingIfNeeded = async () => {
     body: JSON.stringify({ enableAuth: false }),
   });
 
-  // It's ok if onboarding was already completed between the probe and this call.
   if (!choiceResp.ok && choiceResp.status !== 409) {
     const text = await choiceResp.text().catch(() => "");
     throw new Error(`Failed to apply onboarding choice: HTTP ${choiceResp.status} ${text}`);
@@ -76,4 +71,3 @@ export default async function globalSetup(_config: FullConfig) {
   await waitForBackend();
   await completeAuthOnboardingIfNeeded();
 }
-

@@ -10,7 +10,6 @@ export default defineConfig({
     env: {
       DATABASE_URL: "file:./prisma/test.db",
       NODE_ENV: "test",
-      // Keep tests hermetic even if developers run the app locally with OIDC enabled in their shell/.env.
       AUTH_MODE: "local",
     },
     pool: "forks",

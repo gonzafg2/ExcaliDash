@@ -110,7 +110,6 @@ test.describe.serial("Import Functionality", () => {
     await page.goto("/settings");
     await page.waitForLoadState("networkidle");
 
-    // "Import Backup" lives under the collapsed "Advanced / Legacy" section.
     const advancedDetails = page.locator("details", { hasText: "Advanced / Legacy" });
     await expect(advancedDetails).toHaveCount(1);
     const isOpen = await advancedDetails.evaluate((el) => el.hasAttribute("open"));

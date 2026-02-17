@@ -80,7 +80,6 @@ export const UploadProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     setTasks(prev => [...newTasks, ...prev]);
 
     const indexToTaskId = new Map<number, string>();
-    // Progress callbacks are keyed by the index of the `files` array passed into importDrawings.
     supportedTasks.forEach((task, index) => indexToTaskId.set(index, task.id));
 
     const handleProgress = (fileIndex: number, status: UploadStatus, progress: number, error?: string) => {

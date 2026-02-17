@@ -221,7 +221,6 @@ export const registerOidcRoutes = (deps: RegisterOidcRoutesDeps) => {
   }): string => {
     const supported = opts.supported?.filter(Boolean);
 
-    // Public clients authenticate at the token endpoint with "none".
     if (!opts.hasClientSecret) {
       const method = "none";
       if (supported && supported.length > 0 && !supported.includes(method)) {
@@ -233,7 +232,6 @@ export const registerOidcRoutes = (deps: RegisterOidcRoutesDeps) => {
       return method;
     }
 
-    // Confidential clients most commonly use "client_secret_basic", but some providers only allow POST.
     const preferred = ["client_secret_basic", "client_secret_post"];
     for (const candidate of preferred) {
       if (!supported || supported.length === 0 || supported.includes(candidate)) {
@@ -269,7 +267,6 @@ export const registerOidcRoutes = (deps: RegisterOidcRoutesDeps) => {
           token_endpoint_auth_method: tokenEndpointAuthMethod,
         };
 
-        // Allow public clients (no client_secret) for local dev / certain IdP setups.
         if (config.oidc.clientSecret) {
           clientConfig.client_secret = config.oidc.clientSecret;
         }

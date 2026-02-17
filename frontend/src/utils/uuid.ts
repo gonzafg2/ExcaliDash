@@ -3,7 +3,6 @@ const getCryptoObject = (): Crypto | undefined =>
     ? globalThis.crypto || (globalThis as any).msCrypto
     : undefined;
 
-// UUID v4 with safe fallbacks for older browsers / non-secure contexts.
 export const uuidv4 = (): string => {
   const cryptoObj = getCryptoObject();
 
@@ -13,7 +12,6 @@ export const uuidv4 = (): string => {
     const bytes = new Uint8Array(16);
     cryptoObj.getRandomValues(bytes);
 
-    // RFC 4122: set version to 4 and variant to 10xxxxxx.
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
 
@@ -23,7 +21,5 @@ export const uuidv4 = (): string => {
       .join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
   }
 
-  // Non-crypto fallback: fine for UI-only identifiers.
   return `id-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
 };
-

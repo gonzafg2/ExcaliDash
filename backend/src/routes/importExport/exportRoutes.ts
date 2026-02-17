@@ -120,7 +120,6 @@ export const registerExcalidashExportRoute = (deps: RegisterImportExportDeps) =>
       }
     };
 
-    // If the client disconnects mid-stream, stop any further work.
     res.on("close", () => {
       if (res.writableEnded) return;
       abortArchive();
@@ -130,7 +129,6 @@ export const registerExcalidashExportRoute = (deps: RegisterImportExportDeps) =>
       console.error("Archive error:", err);
       abortArchive();
 
-      // If we've already started streaming, we can't reliably send JSON.
       if (res.headersSent) {
         res.destroy(err instanceof Error ? err : undefined);
         return;

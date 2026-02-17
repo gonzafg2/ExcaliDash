@@ -14,8 +14,6 @@ type CsrfInfo = {
   headerName: string;
 };
 
-// Cache CSRF tokens per Playwright request context so parallel tests don't race
-// and we don't accidentally mix cookie jars across contexts.
 const csrfInfoByRequest = new WeakMap<APIRequestContext, CsrfInfo>();
 const csrfFetchByRequest = new WeakMap<APIRequestContext, Promise<CsrfInfo>>();
 
@@ -79,8 +77,6 @@ export async function getCsrfHeaders(
   request: APIRequestContext
 ): Promise<Record<string, string>> {
   const info = await getCsrfInfo(request);
-  // Do not set Cookie manually; let Playwright manage the cookie jar so auth and
-  // csrf cookies can coexist.
   return { [info.headerName]: info.token };
 }
 

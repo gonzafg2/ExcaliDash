@@ -25,8 +25,6 @@ export const UploadStatus: React.FC = () => {
       autoClearTimerRef.current = null;
     }
 
-    // When everything finishes successfully, auto-dismiss the indicator.
-    // If there are errors, keep them visible but still clear successes after a short delay.
     if (!hasActive && hasSuccess) {
       autoClearTimerRef.current = window.setTimeout(() => {
         clearSuccessful();

@@ -124,7 +124,6 @@ export const authMe = async (): Promise<{ user: AuthUser }> => {
 };
 
 export const authRefresh = async (): Promise<void> => {
-  // Cookie-only refresh; body tokens are intentionally not supported.
   await api.post<{ ok?: boolean }>("/auth/refresh", {});
 };
 

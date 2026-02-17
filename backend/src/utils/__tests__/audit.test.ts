@@ -98,7 +98,6 @@ describe("Audit Logging", () => {
       const originalEnable = process.env.ENABLE_AUDIT_LOGGING;
       process.env.ENABLE_AUDIT_LOGGING = "false";
       try {
-        // Reset module cache so config is re-evaluated with ENABLE_AUDIT_LOGGING=false.
         vi.resetModules();
         const audit = await import("../audit");
         audit.setAuditPrismaProvider(() => prisma);
@@ -114,7 +113,6 @@ describe("Audit Logging", () => {
         } else {
           delete process.env.ENABLE_AUDIT_LOGGING;
         }
-        // Restore module state for subsequent tests in this file.
         vi.resetModules();
         const audit = await import("../audit");
         audit.setAuditPrismaProvider(() => prisma);
