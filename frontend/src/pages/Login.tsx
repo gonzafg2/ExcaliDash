@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext';
 import { Logo } from '../components/Logo';
 import * as api from '../api';
 import { USER_KEY } from '../utils/impersonation';
+import { getPasswordPolicy, validatePassword } from '../utils/passwordPolicy';
+import { PasswordRequirements } from '../components/PasswordRequirements';
 
 export const Login: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -32,6 +34,7 @@ export const Login: React.FC = () => {
   const oidcErrorMessage = searchParams.get('oidcErrorMessage');
   const oidcReturnTo = searchParams.get('returnTo') || '/';
   const mustReset = Boolean(user?.mustResetPassword) || queryMustReset;
+  const passwordPolicy = getPasswordPolicy();
 
   useEffect(() => {
     if (!oidcErrorCode) return;
@@ -105,8 +108,9 @@ export const Login: React.FC = () => {
       setError('Please enter and confirm a new password');
       return;
     }
-    if (newPassword.length < 8) {
-      setError('New password must be at least 8 characters long');
+    const passwordError = validatePassword(newPassword, passwordPolicy);
+    if (passwordError) {
+      setError(passwordError);
       return;
     }
     if (newPassword !== confirmNewPassword) {
@@ -183,81 +187,93 @@ export const Login: React.FC = () => {
               </button>
             </div>
           ) : (
-            <div className="rounded-md shadow-sm -space-y-px">
-              {!mustReset ? (
-              <>
-                <div>
-                  <label htmlFor="email" className="sr-only">
-                    Email address
-                  </label>
-                  <input
-                    id="email"
-                    name="email"
-                    type="email"
-                    autoComplete="email"
-                    required
-                    className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
-                    placeholder="Email address"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label htmlFor="password" className="sr-only">
-                    Password
-                  </label>
-                  <input
-                    id="password"
-                    name="password"
-                    type="password"
-                    autoComplete="current-password"
-                    required
-                    className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
-                    placeholder="Password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                  />
-                </div>
-              </>
-              ) : (
-              <>
-                <div>
-                  <label htmlFor="newPassword" className="sr-only">
-                    New password
-                  </label>
-                  <input
-                    id="newPassword"
-                    name="newPassword"
-                    type="password"
-                    autoComplete="new-password"
-                    required
-                    minLength={8}
-                    className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
-                    placeholder="New password (min 8 characters)"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label htmlFor="confirmNewPassword" className="sr-only">
-                    Confirm new password
-                  </label>
-                  <input
-                    id="confirmNewPassword"
-                    name="confirmNewPassword"
-                    type="password"
-                    autoComplete="new-password"
-                    required
-                    minLength={8}
-                    className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
-                    placeholder="Confirm new password"
-                    value={confirmNewPassword}
-                    onChange={(e) => setConfirmNewPassword(e.target.value)}
-                  />
-                </div>
-              </>
+            <>
+              <div className="rounded-md shadow-sm -space-y-px">
+                {!mustReset ? (
+                <>
+                  <div>
+                    <label htmlFor="email" className="sr-only">
+                      Email address
+                    </label>
+                    <input
+                      id="email"
+                      name="email"
+                      type="email"
+                      autoComplete="email"
+                      required
+                      className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                      placeholder="Email address"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="password" className="sr-only">
+                      Password
+                    </label>
+                    <input
+                      id="password"
+                      name="password"
+                      type="password"
+                      autoComplete="current-password"
+                      required
+                      className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                      placeholder="Password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                    />
+                  </div>
+                </>
+                ) : (
+                <>
+                  <div>
+                    <label htmlFor="newPassword" className="sr-only">
+                      New password
+                    </label>
+                    <input
+                      id="newPassword"
+                      name="newPassword"
+                      type="password"
+                      autoComplete="new-password"
+                      required
+                      minLength={passwordPolicy.minLength}
+                      maxLength={passwordPolicy.maxLength}
+                      pattern={passwordPolicy.patternHtml}
+                      className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                      placeholder="New password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="confirmNewPassword" className="sr-only">
+                      Confirm new password
+                    </label>
+                    <input
+                      id="confirmNewPassword"
+                      name="confirmNewPassword"
+                      type="password"
+                      autoComplete="new-password"
+                      required
+                      minLength={passwordPolicy.minLength}
+                      maxLength={passwordPolicy.maxLength}
+                      className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                      placeholder="Confirm new password"
+                      value={confirmNewPassword}
+                      onChange={(e) => setConfirmNewPassword(e.target.value)}
+                    />
+                  </div>
+                </>
+                )}
+              </div>
+              {mustReset && (
+                <PasswordRequirements
+                  password={newPassword}
+                  policy={passwordPolicy}
+                  className="text-gray-600 dark:text-gray-400"
+                />
               )}
-            </div>
+            </>
           )}
 
           {!mustReset && !oidcEnforced && (

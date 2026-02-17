@@ -3,6 +3,8 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Logo } from '../components/Logo';
 import * as api from '../api';
+import { getPasswordPolicy, validatePassword } from '../utils/passwordPolicy';
+import { PasswordRequirements } from '../components/PasswordRequirements';
 
 export const Register: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -24,11 +26,7 @@ export const Register: React.FC = () => {
   } = useAuth();
   const navigate = useNavigate();
 
-  const isProdBuild = import.meta.env.PROD;
-  const strongPasswordPattern =
-    /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{12,100}$/;
-  const strongPasswordMessage =
-    'Password must be at least 12 characters and include upper, lower, number, and symbol';
+  const passwordPolicy = getPasswordPolicy();
 
   useEffect(() => {
     if (authLoading || authEnabled === null) return;
@@ -53,13 +51,9 @@ export const Register: React.FC = () => {
     e.preventDefault();
     setError('');
 
-    if (isProdBuild) {
-      if (!strongPasswordPattern.test(password)) {
-        setError(strongPasswordMessage);
-        return;
-      }
-    } else if (password.length < 8) {
-      setError('Password must be at least 8 characters long');
+    const passwordError = validatePassword(password, passwordPolicy);
+    if (passwordError) {
+      setError(passwordError);
       return;
     }
     if (bootstrapRequired && setupCode.trim().length === 0) {
@@ -185,17 +179,15 @@ export const Register: React.FC = () => {
                 type="password"
                 autoComplete="new-password"
                 required
-                minLength={isProdBuild ? 12 : 8}
-                pattern={
-                  isProdBuild
-                    ? '(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9]).{12,100}'
-                    : undefined
-                }
+                minLength={passwordPolicy.minLength}
+                maxLength={passwordPolicy.maxLength}
+                pattern={passwordPolicy.patternHtml}
                 className="appearance-none relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
-                placeholder={isProdBuild ? 'Password (12+ w/ complexity)' : 'Password (min 8 characters)'}
+                placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
+              <PasswordRequirements password={password} policy={passwordPolicy} className="text-gray-600 dark:text-gray-400" />
             </div>
             {bootstrapRequired && (
               <div>

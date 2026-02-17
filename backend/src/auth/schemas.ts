@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const productionStrongPasswordMessage =
+const strongPasswordMessage =
   "Password must be at least 12 characters and include upper, lower, number, and symbol";
 
 const strongPasswordPattern =
@@ -8,13 +8,9 @@ const strongPasswordPattern =
 
 const passwordSchema = z
   .string()
-  .min(8)
-  .max(100)
-  .refine(
-    (value) =>
-      process.env.NODE_ENV !== "production" || strongPasswordPattern.test(value),
-    { message: productionStrongPasswordMessage }
-  );
+  .min(12, { message: strongPasswordMessage })
+  .max(100, { message: "Password must be at most 100 characters long" })
+  .refine((value) => strongPasswordPattern.test(value), { message: strongPasswordMessage });
 
 export const registerSchema = z.object({
   username: z.string().trim().min(3).max(50).optional(),

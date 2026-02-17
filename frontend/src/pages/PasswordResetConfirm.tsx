@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { Logo } from '../components/Logo';
 import { authPasswordResetConfirm, isAxiosError } from '../api';
+import { getPasswordPolicy, validatePassword } from '../utils/passwordPolicy';
+import { PasswordRequirements } from '../components/PasswordRequirements';
 
 export const PasswordResetConfirm: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -13,6 +15,7 @@ export const PasswordResetConfirm: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const passwordPolicy = getPasswordPolicy();
 
   useEffect(() => {
     if (!token) {
@@ -29,8 +32,9 @@ export const PasswordResetConfirm: React.FC = () => {
       return;
     }
 
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters long');
+    const passwordError = validatePassword(password, passwordPolicy);
+    if (passwordError) {
+      setError(passwordError);
       return;
     }
 
@@ -123,11 +127,15 @@ export const PasswordResetConfirm: React.FC = () => {
                 type="password"
                 autoComplete="new-password"
                 required
+                minLength={passwordPolicy.minLength}
+                maxLength={passwordPolicy.maxLength}
+                pattern={passwordPolicy.patternHtml}
                 className="appearance-none rounded-md relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
-                placeholder="New password (min 8 characters)"
+                placeholder="New password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
+              <PasswordRequirements password={password} policy={passwordPolicy} className="text-gray-600 dark:text-gray-400" />
             </div>
             <div>
               <label htmlFor="confirmPassword" className="sr-only">
@@ -139,6 +147,8 @@ export const PasswordResetConfirm: React.FC = () => {
                 type="password"
                 autoComplete="new-password"
                 required
+                minLength={passwordPolicy.minLength}
+                maxLength={passwordPolicy.maxLength}
                 className="appearance-none rounded-md relative block w-full px-3 py-2 border border-gray-300 dark:border-gray-700 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-white dark:bg-gray-800 focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
                 placeholder="Confirm password"
                 value={confirmPassword}

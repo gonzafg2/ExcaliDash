@@ -7,6 +7,8 @@ import * as api from '../api';
 import type { Collection } from '../types';
 import { Shield, UserPlus, RefreshCw, UserCog, LogIn, Settings as SettingsIcon, KeyRound } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
+import { getPasswordPolicy, validatePassword } from '../utils/passwordPolicy';
+import { PasswordRequirements } from '../components/PasswordRequirements';
 import {
   IMPERSONATION_KEY,
   type ImpersonationState,
@@ -41,6 +43,7 @@ export const Admin: React.FC = () => {
   const navigate = useNavigate();
   const { user: authUser, authEnabled } = useAuth();
   const isAdmin = authUser?.role === 'ADMIN';
+  const passwordPolicy = getPasswordPolicy();
 
   const [collections, setCollections] = useState<Collection[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -60,6 +63,9 @@ export const Admin: React.FC = () => {
   const [impersonateTarget, setImpersonateTarget] = useState<AdminUser | null>(null);
   const [resetPasswordLoadingId, setResetPasswordLoadingId] = useState<string | null>(null);
   const [resetPasswordResult, setResetPasswordResult] = useState<{ email: string; tempPassword: string } | null>(null);
+
+  const [registrationEnabled, setRegistrationEnabled] = useState<boolean | null>(null);
+  const [registrationLoading, setRegistrationLoading] = useState(false);
 
   const [loginRateLimitLoading, setLoginRateLimitLoading] = useState(false);
   const [loginRateLimitSaving, setLoginRateLimitSaving] = useState(false);
@@ -125,6 +131,46 @@ export const Admin: React.FC = () => {
       setError(message);
     } finally {
       setLoadingUsers(false);
+    }
+  };
+
+  const loadRegistrationStatus = async () => {
+    setRegistrationLoading(true);
+    try {
+      const response = await api.api.get<{ registrationEnabled: boolean }>('/auth/status');
+      setRegistrationEnabled(Boolean(response.data.registrationEnabled));
+    } catch (err: unknown) {
+      let message = 'Failed to load registration status';
+      if (api.isAxiosError(err)) {
+        message = err.response?.data?.message || err.response?.data?.error || message;
+      }
+      setError(message);
+    } finally {
+      setRegistrationLoading(false);
+    }
+  };
+
+  const toggleRegistration = async () => {
+    if (!isAdmin || registrationEnabled === null) return;
+
+    setRegistrationLoading(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      const response = await api.api.post<{ registrationEnabled: boolean }>('/auth/registration/toggle', {
+        enabled: !registrationEnabled,
+      });
+      setRegistrationEnabled(Boolean(response.data.registrationEnabled));
+      setSuccess(response.data.registrationEnabled ? 'Registration enabled' : 'Registration disabled');
+    } catch (err: unknown) {
+      let message = 'Failed to update registration setting';
+      if (api.isAxiosError(err)) {
+        message = err.response?.data?.message || err.response?.data?.error || message;
+      }
+      setError(message);
+    } finally {
+      setRegistrationLoading(false);
     }
   };
 
@@ -247,6 +293,7 @@ export const Admin: React.FC = () => {
     void loadCollections();
     void loadUsers();
     void loadLoginRateLimitConfig();
+    void loadRegistrationStatus();
   }, [authEnabled, isAdmin]);
 
   useEffect(() => {
@@ -318,6 +365,12 @@ export const Admin: React.FC = () => {
     e.preventDefault();
     setError('');
     setSuccess('');
+
+    const passwordError = validatePassword(createPassword, passwordPolicy);
+    if (passwordError) {
+      setError(passwordError);
+      return;
+    }
 
     try {
       const payload = {
@@ -521,9 +574,16 @@ export const Admin: React.FC = () => {
                 type="password"
                 value={createPassword}
                 onChange={e => setCreatePassword(e.target.value)}
-                minLength={8}
+                minLength={passwordPolicy.minLength}
+                maxLength={passwordPolicy.maxLength}
+                pattern={passwordPolicy.patternHtml}
                 required
                 className="w-full px-4 py-3 bg-white dark:bg-neutral-800 border-2 border-slate-200 dark:border-neutral-700 rounded-xl text-slate-900 dark:text-white outline-none"
+              />
+              <PasswordRequirements
+                password={createPassword}
+                policy={passwordPolicy}
+                className="text-slate-600 dark:text-neutral-400"
               />
             </div>
 
@@ -588,6 +648,42 @@ export const Admin: React.FC = () => {
           </form>
         </div>
       )}
+
+      <div className="mb-6 bg-white dark:bg-neutral-900 border-2 border-black dark:border-neutral-700 rounded-2xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] p-4 sm:p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-12 h-12 bg-emerald-50 dark:bg-neutral-800 rounded-xl flex items-center justify-center border-2 border-emerald-100 dark:border-neutral-700">
+            <UserPlus size={24} className="text-emerald-700 dark:text-emerald-300" />
+          </div>
+          <div className="min-w-0">
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-white">User Registration</h2>
+            <p className="text-sm text-slate-600 dark:text-neutral-400 font-medium">
+              {registrationEnabled === null
+                ? 'Loading…'
+                : registrationEnabled
+                  ? 'New users can create accounts.'
+                  : 'Registration is disabled.'}
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div>
+            <label className="block text-sm font-bold text-slate-700 dark:text-neutral-300 mb-2">Registration</label>
+            <button
+              type="button"
+              onClick={() => void toggleRegistration()}
+              disabled={registrationLoading || registrationEnabled === null}
+              className={`w-full px-4 py-3 rounded-xl border-2 font-bold transition-all text-sm ${
+                registrationEnabled
+                  ? 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300'
+                  : 'border-slate-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-slate-600 dark:text-neutral-300'
+              }`}
+            >
+              {registrationEnabled === null ? 'Loading…' : registrationLoading ? 'Saving…' : registrationEnabled ? 'Enabled' : 'Disabled'}
+            </button>
+          </div>
+        </div>
+      </div>
 
       <div className="mb-6 bg-white dark:bg-neutral-900 border-2 border-black dark:border-neutral-700 rounded-2xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] p-4 sm:p-6">
         <div className="flex items-center gap-3 mb-4">
