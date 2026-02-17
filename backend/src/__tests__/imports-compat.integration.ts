@@ -277,7 +277,6 @@ describe("Import compatibility (legacy exports)", () => {
     prisma = getTestPrisma();
     fs.mkdirSync(uploadsDir, { recursive: true });
 
-    // Import the server AFTER DATABASE_URL is set by setupTestDb/getTestPrisma.
     ({ app } = await import("../index"));
 
     agent = request.agent(app);
@@ -342,7 +341,6 @@ describe("Import compatibility (legacy exports)", () => {
       select: { id: true, name: true, collectionId: true, userId: true },
     });
 
-    // In single-user mode, imports land on the bootstrap acting user.
     expect(importedDrawings.every((d) => d.userId === BOOTSTRAP_USER_ID)).toBe(true);
     expect(importedDrawings.map((d) => d.id)).toEqual(
       expect.arrayContaining(["legacy-drawing-1", "legacy-drawing-2", "legacy-drawing-trash"])

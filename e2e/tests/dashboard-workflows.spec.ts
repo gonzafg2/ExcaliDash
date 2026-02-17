@@ -46,7 +46,6 @@ test.describe("Dashboard Workflows", () => {
       try {
         await deleteDrawing(request, id);
       } catch {
-        // Ignore cleanup failures to keep tests resilient
       }
     }
     createdDrawingIds = [];
@@ -55,7 +54,6 @@ test.describe("Dashboard Workflows", () => {
       try {
         await deleteCollection(request, id);
       } catch {
-        // Ignore cleanup failures to keep tests resilient
       }
     }
     createdCollectionIds = [];
@@ -147,7 +145,6 @@ test.describe("Dashboard Workflows", () => {
     await applyDashboardSearch(page, prefix);
     await expect(page.locator("[id^='drawing-card-']")).toHaveCount(2);
 
-    // Select all filtered cards (2) for a deterministic bulk action.
     await page.getByTitle("Select All").click();
 
     await page.getByTitle("Duplicate Selected").click();
@@ -166,7 +163,6 @@ test.describe("Dashboard Workflows", () => {
       await page.getByTitle("Move to Trash").click();
     };
 
-    // Move all 4. If one is missed due transient selection flake, recover with extra passes.
     await bulkMoveToTrash();
 
     for (let i = 0; i < 2; i++) {

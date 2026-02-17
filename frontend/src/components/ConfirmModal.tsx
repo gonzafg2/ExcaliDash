@@ -29,7 +29,6 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
 }) => {
   if (!isOpen) return null;
 
-  // Icon and styling based on variant
   const isSuccess = variant === 'success';
   const IconComponent = isSuccess ? CheckCircle : AlertTriangle;
   const iconClasses = isSuccess 

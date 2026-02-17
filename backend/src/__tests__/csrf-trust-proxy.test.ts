@@ -14,7 +14,6 @@ import {
   getCsrfTokenHeader,
 } from "../security";
 
-// mock the getClientId function behavior
 const getClientIdFromRequest = (req: express.Request): string => {
   const ip = req.ip || req.connection.remoteAddress || "unknown";
   const userAgent = req.headers["user-agent"] || "unknown";
@@ -30,10 +29,7 @@ describe("Issue #38: CSRF with trust proxy settings", () => {
   });
 
   it("demonstrates the trust proxy issue with multiple proxies", async () => {
-    // ext proxy -> frontend nginx -> backend
-    // X-Forwarded-For: 203.0.113.42 (client), 10.0.0.5 (external proxy), 172.17.0.3 (frontend nginx)
 
-    // With trust proxy: 1 (current setting)
     const app1 = express();
     app1.set("trust proxy", 1);
     app1.use(express.json());
@@ -45,14 +41,11 @@ describe("Issue #38: CSRF with trust proxy settings", () => {
       });
     });
 
-    // Simulate request through multiple proxies
     const response1 = await request(app1)
       .get("/test-ip")
       .set("X-Forwarded-For", "203.0.113.42, 10.0.0.5, 172.17.0.3")
       .set("User-Agent", "Mozilla/5.0 Test");
 
-    // With trust proxy: 1 in supertest (no real socket), Express takes the last IP
-    // In production with a real connection, behavior differs - the key point is it's NOT the client IP
     expect(response1.body.ip).toBe("172.17.0.3");
     console.log(
       "trust proxy: 1 → IP:",
@@ -60,7 +53,6 @@ describe("Issue #38: CSRF with trust proxy settings", () => {
       "(not the real client IP)",
     );
 
-    // With trust proxy: true
     const app2 = express();
     app2.set("trust proxy", true);
     app2.use(express.json());
@@ -77,7 +69,6 @@ describe("Issue #38: CSRF with trust proxy settings", () => {
       .set("X-Forwarded-For", "203.0.113.42, 10.0.0.5, 172.17.0.3")
       .set("User-Agent", "Mozilla/5.0 Test");
 
-    // With trust proxy: true, Express takes leftmost IP
     expect(response2.body.ip).toBe("203.0.113.42");
     console.log(
       "trust proxy: true → IP:",
@@ -89,12 +80,9 @@ describe("Issue #38: CSRF with trust proxy settings", () => {
   it("simulates CSRF failure scenario from issue #38", async () => {
     const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
 
-    // Request 1: Fetch CSRF token
-    // X-Forwarded-For shows: client, external-proxy-1, frontend-nginx
     const clientIp1 = "203.0.113.42";
     const externalProxyIp1 = "10.0.0.5"; // External proxy IP on first request
 
-    // With trust proxy: 1, Express sees the external proxy IP
     const clientId1 = `${externalProxyIp1}:${userAgent}`;
     const token = createCsrfToken(clientId1);
 
@@ -105,8 +93,6 @@ describe("Issue #38: CSRF with trust proxy settings", () => {
     console.log("  Express sees IP:", externalProxyIp1);
     console.log("  ClientId:", clientId1.slice(0, 50) + "...");
 
-    // Request 2: Try to create drawing with token
-    // External proxy IP might differ slightly
     const externalProxyIp2 = "10.0.0.6";
 
     const clientId2 = `${externalProxyIp2}:${userAgent}`;
@@ -118,7 +104,6 @@ describe("Issue #38: CSRF with trust proxy settings", () => {
     console.log("  Express sees IP:", externalProxyIp2);
     console.log("  ClientId:", clientId2.slice(0, 50) + "...");
 
-    // CSRF validation fails because clientId changed
     const isValid = validateCsrfToken(clientId2, token);
 
     expect(isValid).toBe(false);
@@ -136,7 +121,6 @@ describe("Issue #38: CSRF with trust proxy settings", () => {
     console.log("  X-Forwarded-For:", `${realClientIp}, 10.0.0.5, 172.17.0.3`);
     console.log("  Express sees IP:", realClientIp);
 
-    // Request 2: Use token (even if middle proxy IPs differ)
     const clientId2 = `${realClientIp}:${userAgent}`;
 
     console.log("Create drawing");
@@ -160,9 +144,6 @@ describe("Issue #38: CSRF with trust proxy settings", () => {
       res.json({ ip: req.ip });
     });
 
-    // Client -> Synology (192.168.1.x) -> Docker frontend (192.168.11.x) -> Backend
-    // In supertest without real socket, trust proxy: 1 returns last IP
-    // Key point: it's NOT the real client IP (192.168.0.100)
     await request(app)
       .get("/test")
       .set("X-Forwarded-For", "192.168.0.100, 192.168.1.4, 192.168.11.166");

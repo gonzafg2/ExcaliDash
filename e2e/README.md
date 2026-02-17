@@ -99,11 +99,9 @@ e2e/
 import { test, expect } from "@playwright/test";
 
 test("my test", async ({ page, request }) => {
-  // Use `page` for browser interactions
   await page.goto("/");
   await expect(page.locator("h1")).toBeVisible();
   
-  // Use `request` for API calls
   const response = await request.get("http://localhost:8000/drawings");
   expect(response.ok()).toBe(true);
 });

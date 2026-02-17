@@ -75,7 +75,6 @@ export const ImpersonationBanner: React.FC = () => {
           clearLocalImpersonation();
         }
       } catch {
-        // Ignore probe failures; retry on next render/event.
       }
     };
 

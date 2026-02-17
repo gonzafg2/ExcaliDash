@@ -6,8 +6,6 @@ import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
 
-// Use a unique test database per test-file import to avoid cross-file contention
-// when Vitest runs test files in parallel.
 const TEST_DB_FILENAME = `test.${process.pid}.${Math.random().toString(16).slice(2)}.db`;
 const TEST_DB_PATH = path.resolve(__dirname, "../../prisma", TEST_DB_FILENAME);
 const DB_PUSH_LOCK_PATH = path.resolve(__dirname, "../../prisma/.test-db-push.lock");
@@ -40,12 +38,10 @@ const withDbPushLock = (fn: () => void) => {
     try {
       fs.closeSync(fd);
     } catch {
-      // ignore
     }
     try {
       fs.unlinkSync(DB_PUSH_LOCK_PATH);
     } catch {
-      // ignore
     }
   }
 };
@@ -72,7 +68,6 @@ export const setupTestDb = () => {
   const databaseUrl = `file:${TEST_DB_PATH}`;
   process.env.DATABASE_URL = databaseUrl;
   
-  // Run Prisma migrations to create the test database
   try {
     withDbPushLock(() => {
       execSync("npx prisma db push --skip-generate --force-reset", {
@@ -80,9 +75,6 @@ export const setupTestDb = () => {
         env: {
           ...process.env,
           DATABASE_URL: databaseUrl,
-          // Work around Prisma schema engine failures on this repo's schema
-          // (seen as a blank "Schema engine error:" from `prisma db push`).
-          // `RUST_LOG=info` reliably avoids the failure mode.
           RUST_LOG: "info",
         },
         stdio: "pipe",
@@ -98,7 +90,6 @@ export const setupTestDb = () => {
  * Clean up the test database between tests
  */
 export const cleanupTestDb = async (prisma: PrismaClient) => {
-  // Delete all drawings and collections.
   await prisma.drawing.deleteMany({});
   await prisma.collection.deleteMany({});
 };
@@ -125,11 +116,9 @@ export const createTestUser = async (prisma: PrismaClient, email: string = "test
  * Initialize test database with required data
  */
 export const initTestDb = async (prisma: PrismaClient) => {
-  // Create a test user first
   const testUser = await createTestUser(prisma);
   const trashCollectionId = `trash:${testUser.id}`;
   
-  // Ensure Trash collection exists
   const trash = await prisma.collection.findFirst({
     where: { id: trashCollectionId, userId: testUser.id },
   });
@@ -147,14 +136,12 @@ export const initTestDb = async (prisma: PrismaClient) => {
  * This creates a small but valid PNG for testing
  */
 export const generateSampleImageDataUrl = (size: "small" | "medium" | "large" = "small"): string => {
-  // Minimal 1x1 red PNG (smallest valid PNG possible)
   const smallPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
   
   if (size === "small") {
     return `data:image/png;base64,${smallPng}`;
   }
   
-  // For medium/large, repeat the pattern to create larger payloads
   const repetitions = size === "medium" ? 1000 : 10000;
   const paddedBase64 = smallPng.repeat(repetitions);
   
@@ -166,10 +153,7 @@ export const generateSampleImageDataUrl = (size: "small" | "medium" | "large" = 
  * This is specifically designed to catch the truncation bug from issue #17
  */
 export const generateLargeImageDataUrl = (): string => {
-  // Create a base64 string that's definitely larger than 10000 characters
-  // This simulates a real image that would get truncated by the old code
   const baseImage = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
-  // Repeat to create a ~50KB payload
   const largeBase64 = baseImage.repeat(500);
   return `data:image/png;base64,${largeBase64}`;
 };
@@ -269,7 +253,6 @@ export const compareFilesObjects = (original: Record<string, any>, received: Rec
     const origFile = original[key];
     const recvFile = received[key];
     
-    // Check dataURL specifically - this is where truncation would occur
     if (origFile.dataURL !== recvFile.dataURL) {
       differences.push(
         `DataURL mismatch for ${key}: ` +
@@ -277,7 +260,6 @@ export const compareFilesObjects = (original: Record<string, any>, received: Rec
         `received length=${recvFile.dataURL?.length ?? 0}`
       );
       
-      // Check if it was truncated
       if (recvFile.dataURL && origFile.dataURL?.startsWith(recvFile.dataURL.substring(0, 100))) {
         differences.push(`TRUNCATION DETECTED: dataURL was cut short`);
       }

@@ -83,7 +83,6 @@ describe("importLegacyFiles", () => {
 
     expect(apiGet).toHaveBeenCalledWith("/collections");
 
-    // One new collection created ("New Collection") and three drawings posted.
     expect(apiPost.mock.calls.filter((c) => c[0] === "/collections")).toHaveLength(1);
     expect(apiPost.mock.calls.filter((c) => c[0] === "/drawings")).toHaveLength(3);
 

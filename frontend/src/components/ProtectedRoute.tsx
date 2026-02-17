@@ -43,13 +43,11 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
     return <Navigate to="/auth-setup" replace />;
   }
 
-  // Single-user mode: auth disabled -> allow access.
   if (!authEnabled) {
     return <>{children}</>;
   }
 
   if (!isAuthenticated) {
-    // If auth is enabled but no admin exists yet, force bootstrap registration.
     if (bootstrapRequired) {
       return <Navigate to="/register" replace />;
     }
@@ -60,7 +58,6 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
     return <Navigate to="/login" replace />;
   }
 
-  // Force password reset before allowing app access.
   if (user?.mustResetPassword && location.pathname !== '/login') {
     return <Navigate to="/login?mustReset=1" replace />;
   }

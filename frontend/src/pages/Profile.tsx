@@ -19,14 +19,12 @@ export const Profile: React.FC = () => {
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
 
-    // User info state
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [showEmailForm, setShowEmailForm] = useState(false);
     const [emailCurrentPassword, setEmailCurrentPassword] = useState('');
     const [emailLoading, setEmailLoading] = useState(false);
 
-    // Password change state
     const [currentPassword, setCurrentPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
@@ -42,7 +40,6 @@ export const Profile: React.FC = () => {
                 const collectionsData = await api.getCollections();
                 setCollections(collectionsData);
                 
-                // Fetch user info
                 if (authUser) {
                     setName(authUser.name);
                     setEmail(authUser.email);
@@ -99,11 +96,8 @@ export const Profile: React.FC = () => {
         try {
             const response = await api.api.put<{ user: { id: string; email: string; name: string; createdAt: string; updatedAt: string } }>('/auth/profile', { name: name.trim() });
             setSuccess('Name updated successfully');
-            // Update auth context - refresh user data
             if (response.data?.user) {
-                // Update localStorage with new user data
                 localStorage.setItem('excalidash-user', JSON.stringify(response.data.user));
-                // Reload to update auth context
                 setTimeout(() => window.location.reload(), 500);
             }
         } catch (err: unknown) {
@@ -152,7 +146,6 @@ export const Profile: React.FC = () => {
             setCurrentPassword('');
             setNewPassword('');
             setConfirmPassword('');
-            // Logout user to force re-login with new password
             setTimeout(() => {
                 logout();
                 navigate('/login');

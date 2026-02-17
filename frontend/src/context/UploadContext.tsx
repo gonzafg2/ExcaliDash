@@ -56,7 +56,6 @@ export const UploadProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
     setTasks(prev => [...newTasks, ...prev]);
 
-    // Map file index to task ID for progress callbacks (handles duplicate filenames)
     const indexToTaskId = new Map<number, string>();
     newTasks.forEach((t, index) => indexToTaskId.set(index, t.id));
 
@@ -71,7 +70,6 @@ export const UploadProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       await importDrawings(files, targetCollectionId, undefined, handleProgress);
     } catch (e) {
       console.error("Global upload error", e);
-      // Mark all new tasks as error if something crashed completely
       newTasks.forEach(t => {
         updateTask(t.id, { status: 'error', error: 'Upload failed unexpectedly' });
       });

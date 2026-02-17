@@ -532,7 +532,6 @@ export const registerOidcRoutes = (deps: RegisterOidcRoutesDeps) => {
       }
 
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-        // Retry path for identity creation race: redirect and let user retry once.
         return redirectToLoginWithError(req, res, "callback_failed", flow.returnTo);
       }
 

@@ -92,7 +92,6 @@ export const Dashboard: React.FC = () => {
     onRefreshSuccess: resetSelection,
   });
 
-  // Infinite scroll observer
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
@@ -207,9 +206,7 @@ export const Dashboard: React.FC = () => {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Cmd+A or Ctrl+A to Select All
       if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
-        // Don't select all if user is typing in an input
         if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) {
           return;
         }
@@ -218,14 +215,12 @@ export const Dashboard: React.FC = () => {
         setSelectedIds(allIds);
       }
 
-      // Escape to Clear Selection
       if (e.key === 'Escape') {
         e.preventDefault();
         setSelectedIds(new Set());
         setLastSelectedId(null);
       }
 
-      // Cmd+K to Search
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
         searchInputRef.current?.focus();
@@ -238,12 +233,10 @@ export const Dashboard: React.FC = () => {
 
   const handleSortFieldChange = (field: SortField) => {
     setSortConfig(current => {
-      // If changing field, use default direction for that field
       if (current.field !== field) {
         const defaultDirection = field === 'name' ? 'asc' : 'desc';
         return { field, direction: defaultDirection };
       }
-      // If same field, keep current direction
       return current;
     });
     setShowSortMenu(false);
@@ -282,9 +275,7 @@ export const Dashboard: React.FC = () => {
     const fileArray = Array.from(files);
     const targetCollectionId = selectedCollectionId === undefined ? null : selectedCollectionId;
     
-    // Use the global upload context
     uploadFiles(fileArray, targetCollectionId).finally(() => {
-      // Refresh after all uploads complete (success or failure)
       refreshData();
     });
   };
@@ -301,13 +292,10 @@ export const Dashboard: React.FC = () => {
 
   const handleDeleteDrawing = async (id: string) => {
     if (isTrashView) {
-      // Permanent Delete -> Confirm first
       setDrawingToDelete(id);
     } else {
-      // Move to Trash -> No Confirm
       const trashId = 'trash';
 
-      // Optimistic Remove from current view
       setDrawings(prev => {
         const next = prev.filter(d => d.id !== id);
         if (next.length !== prev.length) {
@@ -349,7 +337,6 @@ export const Dashboard: React.FC = () => {
     setSelectedIds(prev => {
       const next = new Set(prev);
 
-      // Handle Shift+Select
       if (e.shiftKey && lastSelectedId && sortedDrawings.some(d => d.id === lastSelectedId)) {
         const currentIndex = sortedDrawings.findIndex(d => d.id === id);
         const lastIndex = sortedDrawings.findIndex(d => d.id === lastSelectedId);
@@ -427,7 +414,6 @@ export const Dashboard: React.FC = () => {
 
     const idsToMove = Array.from(selectedIds);
 
-    // Optimistic update
     setDrawings(prev => {
       const updated = prev.map(d => selectedIds.has(d.id) ? { ...d, collectionId } : d);
       if (selectedCollectionId === undefined) return updated;
@@ -540,11 +526,9 @@ export const Dashboard: React.FC = () => {
   
   const handleSelectAll = () => {
     if (allSelected) {
-      // Deselect all
       setSelectedIds(new Set());
       setLastSelectedId(null);
     } else {
-      // Select all
       const allIds = new Set(sortedDrawings.map(d => d.id));
       setSelectedIds(allIds);
     }
@@ -554,7 +538,6 @@ export const Dashboard: React.FC = () => {
     e.preventDefault();
     e.stopPropagation();
 
-    // Handle Files
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const files = Array.from(e.dataTransfer.files);
       
@@ -584,11 +567,9 @@ export const Dashboard: React.FC = () => {
     if (selectedIds.has(draggedDrawingId)) {
       idsToMove = new Set(selectedIds);
     } else {
-      // Otherwise move just the dragged item
       idsToMove.add(draggedDrawingId);
     }
 
-    // Optimistic Update
     setDrawings(prev => {
       const updated = prev.map(d => idsToMove.has(d.id) ? { ...d, collectionId: targetCollectionId } : d);
       if (selectedCollectionId === undefined) return updated;
@@ -600,7 +581,6 @@ export const Dashboard: React.FC = () => {
       return next;
     });
 
-    // Clear selection if we moved selected items
     if (selectedIds.has(draggedDrawingId)) {
       setSelectedIds(new Set());
     }
@@ -926,7 +906,6 @@ export const Dashboard: React.FC = () => {
         onDragOver={(e) => {
           e.preventDefault();
           if (!isDraggingFile && e.dataTransfer.types.includes('Files')) {
-            // Fallback if dragEnter didn't fire (e.g. initial drag start outside window)
             setIsDraggingFile(true);
           }
         }}

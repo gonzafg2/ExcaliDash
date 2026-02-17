@@ -5,7 +5,6 @@ import { PenTool, Trash2, FolderInput, ArrowRight, Check, Clock, Copy, Download,
 import type { DrawingSummary, Collection, Drawing } from '../types';
 import { formatDistanceToNow } from 'date-fns';
 import clsx from 'clsx';
-// import { exportToSvg } from "@excalidraw/excalidraw"; // Lazy load this instead
 import { exportDrawingToFile } from '../utils/exportUtils';
 import { previewHasEmbeddedImages } from '../utils/previewSvg';
 
@@ -139,7 +138,6 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
         if (cancelled) return;
         if (!data?.elements || !data?.appState) return;
 
-        // Lazy load exportToSvg to keep the main bundle small
         const { exportToSvg } = await import("@excalidraw/excalidraw");
         
         if (cancelled) return;
@@ -158,7 +156,6 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
         const previewHtml = svg.outerHTML;
         setPreviewSvg(previewHtml);
 
-        // Save to backend and notify parent
         api.updateDrawing(drawing.id, { preview: previewHtml }).catch(console.error);
         onPreviewGenerated?.(drawing.id, previewHtml);
       } catch (e) {
@@ -191,7 +188,6 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
     } catch (error) {
       console.error("Failed to export drawing", error);
       setExportError("Failed to export drawing. Please try again.");
-      // Clear error after 3 seconds
       setTimeout(() => setExportError(null), 3000);
     } finally {
       setIsExporting(false);
@@ -199,7 +195,6 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
   }, [drawing, ensureFullData]);
 
 
-  // Close context menu on click outside
   useEffect(() => {
     const handleClick = () => setContextMenu(null);
     document.addEventListener('click', handleClick);
@@ -240,8 +235,6 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
           "drawing-card group relative flex flex-col bg-white dark:bg-neutral-900 rounded-2xl border-2 transition-all duration-200 ease-out",
           !isTrash && "hover:-translate-y-1 hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)]",
           isTrash && "shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] opacity-80 grayscale-[0.5]",
-          // "always show the border for trash" -> It already has a border. Maybe "always show shadow"?
-          // I added default shadow for trash and reduced opacity to indicate trash state.
           isSelected ? "border-neutral-500 dark:border-neutral-500 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)]" : "border-black dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)]"
         )}
       >

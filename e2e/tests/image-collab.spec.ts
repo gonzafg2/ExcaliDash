@@ -17,20 +17,15 @@ const openEditorTab = async (context: BrowserContext, drawingId: string) => {
   await page.goto(`/editor/${drawingId}`);
   await page.waitForSelector("[class*='excalidraw'], canvas", { timeout: 15000 });
   await page.waitForFunction(() => {
-    // @ts-expect-error - injected in dev build
     return !!(window as any).__EXCALIDASH_EXCALIDRAW_API__;
   });
-  // Wait for socket connection (critical for realtime sync assertions).
   await page.waitForFunction(() => {
-    // @ts-expect-error - injected in dev build
     return (window as any).__EXCALIDASH_SOCKET_STATUS__?.connected === true;
   });
   return page;
 };
 
 const waitForFileInEditor = async (page: Page, fileId: string) => {
-  // Excalidraw may clear `dataURL` from in-memory files for perf/memory,
-  // so the stable signal is that the file entry exists.
   const timeoutMs = 30000;
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -57,7 +52,6 @@ const injectImageElementThenFile = async (page: Page) => {
       .join("");
     const elementId = `img_${Math.random().toString(36).slice(2)}`;
 
-    // Tiny PNG data URL
     const dataURL =
       "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAIElEQVR42mP8z8Dwn4EIwDiqgWjAqIGhBo4aGAAAcO0Gg+o1P8oAAAAASUVORK5CYII=";
 
@@ -98,7 +92,6 @@ const injectImageElementThenFile = async (page: Page) => {
     const before = api.getSceneElementsIncludingDeleted();
     api.updateScene({ elements: [...before, element] });
 
-    // Simulate async file arrival (paste/import often behaves like this)
     await new Promise((r) => setTimeout(r, 600));
     api.addFiles({
       [fileId]: {
@@ -148,7 +141,6 @@ test.describe("Issue #25 - image sync + deletion across tabs", () => {
       try {
         await deleteDrawing(request, id);
       } catch {
-        // ignore cleanup errors
       }
     }
     createdDrawingIds.length = 0;
@@ -170,14 +162,11 @@ test.describe("Issue #25 - image sync + deletion across tabs", () => {
     const page1 = await openEditorTab(context, drawing.id);
     const page2 = await openEditorTab(context, drawing.id);
 
-    // Create the image in tab1 (element first, file later) to model paste/import.
     const { fileId, elementId } = await injectImageElementThenFile(page1);
 
-    // Tab2 should receive the element and the file in real-time.
     await waitForElementPresent(page2, elementId);
     await waitForFileInEditor(page2, fileId);
 
-    // Persist the current state explicitly (ensures tab3 loads it even if the editor didn't auto-save).
     const snapshot = await page1.evaluate(() => {
       const api = (window as any).__EXCALIDASH_EXCALIDRAW_API__;
       const elements = api.getSceneElementsIncludingDeleted();
@@ -194,11 +183,9 @@ test.describe("Issue #25 - image sync + deletion across tabs", () => {
     });
     await updateDrawing(request, drawing.id, snapshot);
 
-    // Open tab3 and ensure it loads (persistence path)
     const page3 = await openEditorTab(context, drawing.id);
     await waitForFileInEditor(page3, fileId);
 
-    // Force the "tab2 doesn't disappear" repro: keep the image selected in tab2.
     await page2.evaluate((id) => {
       const api = (window as any).__EXCALIDASH_EXCALIDRAW_API__;
       const appState = api.getAppState();
@@ -210,7 +197,6 @@ test.describe("Issue #25 - image sync + deletion across tabs", () => {
       });
     }, elementId);
 
-    // Delete the image from tab1 (programmatic delete to ensure broadcast)
     await page1.evaluate((id) => {
       const api = (window as any).__EXCALIDASH_EXCALIDRAW_API__;
       const els = api.getSceneElementsIncludingDeleted();
@@ -226,11 +212,9 @@ test.describe("Issue #25 - image sync + deletion across tabs", () => {
       api.updateScene({ elements: els.map((e: any) => (e.id === id ? updated : e)) });
     }, elementId);
 
-    // All tabs should converge to deleted
     await waitForElementDeletedEverywhere(page2, elementId);
     await waitForElementDeletedEverywhere(page3, elementId);
 
-    // Also verify persistence layer captured the file (tab3 load case)
     const persisted = await getDrawing(request, drawing.id);
     const persistedFile = persisted.files?.[fileId];
     expect(typeof persistedFile?.dataURL).toBe("string");

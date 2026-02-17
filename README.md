@@ -269,10 +269,10 @@ Then open:
 
 OIDC login test users (realm: `excalidash`):
 
-| User                | Password    |
-| ------------------- | ----------- |
-| `alice@example.com` | `Passw0rd!` |
-| `bob@example.com`   | `Passw0rd!` |
+| User | Notes |
+| --- | --- |
+| `alice@example.com` | Created by the seed realm; set an initial password in Keycloak admin. |
+| `bob@example.com` | Created by the seed realm; set an initial password in Keycloak admin. |
 
 Stop/clean up:
 

@@ -23,7 +23,6 @@ export const errorHandler = (
   const statusCode = err.statusCode || 500;
   const isDevelopment = config.nodeEnv === "development";
 
-  // Log full error details server-side
   console.error("Error:", {
     message: err.message,
     stack: err.stack,
@@ -33,9 +32,7 @@ export const errorHandler = (
     timestamp: new Date().toISOString(),
   });
 
-  // In production, don't expose internal error details
   if (!isDevelopment) {
-    // Generic error messages for clients
     if (statusCode >= 500) {
       res.status(statusCode).json({
         error: "Internal server error",
@@ -44,7 +41,6 @@ export const errorHandler = (
       return;
     }
 
-    // For client errors (4xx), provide generic message
     res.status(statusCode).json({
       error: "Request error",
       message: err.isOperational ? err.message : "Invalid request",
@@ -52,7 +48,6 @@ export const errorHandler = (
     return;
   }
 
-  // In development, show full error details
   res.status(statusCode).json({
     error: err.message,
     stack: err.stack,

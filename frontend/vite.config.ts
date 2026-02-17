@@ -18,7 +18,6 @@ try {
 const appVersion = process.env.VITE_APP_VERSION?.trim() || versionFromFile;
 const buildLabel = process.env.VITE_APP_BUILD_LABEL?.trim() || "local development build";
 
-// https://vite.dev/config/
 export default defineConfig(({ command }) => {
   const nodeEnv = process.env.NODE_ENV || (command === "build" ? "production" : "development");
   const processEnvDefines = {

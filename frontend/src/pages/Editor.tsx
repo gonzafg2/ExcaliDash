@@ -125,7 +125,6 @@ export const Editor: React.FC = () => {
         const prevUpdated = getUpdated(previous);
         if (nextVersion === prevVersion && nextUpdated > prevUpdated) return true;
 
-        // Fallback for callers that may not bump version/updated consistently.
         return nextVersion === prevVersion && nextUpdated === prevUpdated;
       });
     },
@@ -264,7 +263,6 @@ export const Editor: React.FC = () => {
     });
     socketRef.current = socket;
 
-    // DEV-only: expose socket status for E2E tests to wait for connection.
     if (import.meta.env.DEV) {
       (window as any).__EXCALIDASH_SOCKET_STATUS__ = {
         connected: socket.connected,
@@ -279,7 +277,6 @@ export const Editor: React.FC = () => {
 
     socket.emit('join-room', { drawingId: id, user: me });
 
-    // Start the render loop for cursors
     const renderLoop = () => {
       if (cursorBuffer.current.size > 0 && excalidrawAPI.current) {
         const collaborators = new Map(excalidrawAPI.current.getAppState().collaborators || []);
@@ -328,8 +325,6 @@ export const Editor: React.FC = () => {
       const currentAppState = excalidrawAPI.current.getAppState();
       const mySelectedIds = currentAppState.selectedElementIds || {};
 
-      // Don't overwrite elements I'm actively editing/dragging in this tab,
-      // BUT always apply remote deletions so all tabs converge.
       const validRemoteElements = elements.filter(
         (el: any) => el?.isDeleted || !mySelectedIds[el.id]
       );
@@ -348,8 +343,6 @@ export const Editor: React.FC = () => {
         : lastSyncedFilesRef.current;
 
       if (shouldUpdateFiles && typeof excalidrawAPI.current.addFiles === "function") {
-        // Excalidraw manages binary files separately from scene elements; updateScene(files)
-        // is not reliable for syncing pasted images across tabs.
         excalidrawAPI.current.addFiles(Object.values(incomingFiles));
       }
 
@@ -405,19 +398,14 @@ export const Editor: React.FC = () => {
     }
   }, [id, me]);
 
-  // Refs for API interaction
   const excalidrawAPI = useRef<any>(null);
 
   const setExcalidrawAPI = useCallback((api: any) => {
     excalidrawAPI.current = api;
-    // DEV-only: expose API for debugging/e2e reproduction of collaboration bugs.
-    // This is intentionally not relied upon by app logic.
     if (import.meta.env.DEV) {
       (window as any).__EXCALIDASH_EXCALIDRAW_API__ = api;
     }
 
-    // Ensure file-only updates (e.g. pasted image dataURL arriving asynchronously)
-    // are broadcast immediately even if Excalidraw doesn't trigger `onChange` for files.
     if (api && typeof api.addFiles === "function" && !patchedAddFilesApisRef.current.has(api as object)) {
       patchedAddFilesApisRef.current.add(api as object);
       const originalAddFiles = api.addFiles.bind(api);
@@ -427,13 +415,11 @@ export const Editor: React.FC = () => {
           : Object.values(filesInput || {});
         originalAddFiles(normalizedFiles);
 
-        // Avoid rebroadcast loops when we are applying remote updates.
         if (isSyncing.current) return;
 
         const nextFiles = api.getFiles?.() || {};
         const didEmit = emitFilesDeltaIfNeeded(nextFiles);
 
-        // Persist after file data becomes available so new tabs (tab3) load correctly.
         if (didEmit && id && latestAppStateRef.current && debouncedSaveRef.current) {
           hasSceneChangesSinceLoadRef.current = true;
           debouncedSaveRef.current(id, latestElementsRef.current, latestAppStateRef.current, latestFilesRef.current || {});
@@ -443,7 +429,6 @@ export const Editor: React.FC = () => {
     setIsReady(true);
   }, [emitFilesDeltaIfNeeded, id]);
 
-  // Handle #addLibrary URL hash parameter for importing libraries from links
   useEffect(() => {
     if (!isReady || !excalidrawAPI.current) return;
 
@@ -480,7 +465,6 @@ export const Editor: React.FC = () => {
         toast.success('Library imported successfully', { id: 'library-import' });
         console.log('[Editor] Library import complete');
 
-        // Clear the hash to prevent re-importing on refresh
         window.history.replaceState(null, '', window.location.pathname + window.location.search);
       } catch (err) {
         console.error('[Editor] Failed to import library:', err);
@@ -623,7 +607,6 @@ export const Editor: React.FC = () => {
             try {
               await saveDataRef.current(drawingId, elements, appState, files);
             } catch {
-              // Background autosaves already surface their own toast via saveDataRef.
             }
             return;
           }
@@ -711,7 +694,6 @@ export const Editor: React.FC = () => {
     }, 1000),
     [enqueueSceneSave] // Stable queue wrapper avoids concurrent version conflicts
   );
-  // Allow non-hook code (e.g., Excalidraw API wrappers) to trigger debounced saves.
   debouncedSaveRef.current = debouncedSave;
   const debouncedSavePreview = useCallback(
     debounce((drawingId, elements, appState, files) => {
@@ -759,7 +741,6 @@ export const Editor: React.FC = () => {
         latestFilesRef.current = nextFiles;
       }
       if (shouldSyncFiles) {
-        // Keep our baseline in sync so we only send deltas next time.
         lastSyncedFilesRef.current = nextFiles;
       }
 
@@ -842,8 +823,6 @@ export const Editor: React.FC = () => {
           gridSize: persistedAppState.gridSize ?? null,
           collaborators: new Map(),
         };
-        // Ensure we always have an appState available for file-only persistence triggers
-        // (some Excalidraw file updates may not trigger onChange with appState).
         latestAppStateRef.current = hydratedAppState;
 
         setInitialData({
@@ -887,7 +866,6 @@ export const Editor: React.FC = () => {
     loadData();
   }, [id, recordElementVersion, buildEmptyScene]);
 
-  // Hijack Ctrl+S to save immediately
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
@@ -938,7 +916,6 @@ export const Editor: React.FC = () => {
       latestFilesRef.current = currentFiles;
     }
 
-    // Get ALL elements including deleted (fixes the "deletion not syncing" bug)
     const allElements = excalidrawAPI.current
       ? excalidrawAPI.current.getSceneElementsIncludingDeleted()
       : elements;
@@ -1023,13 +1000,11 @@ export const Editor: React.FC = () => {
     latestElementsRef.current = allElements;
     hasSceneChangesSinceLoadRef.current = true;
 
-    // Trigger Sync (Throttled)
     broadcastChanges(allElements, currentFiles);
 
     const filesSnapshot = currentFiles;
     latestFilesRef.current = filesSnapshot;
 
-    // Trigger Fast Save
     console.log("[Editor] Queueing save", {
       drawingId: id,
       elementCount: allElements.length,
@@ -1039,7 +1014,6 @@ export const Editor: React.FC = () => {
       debouncedSave(id, allElements, appState, filesSnapshot);
     }
 
-    // Trigger Slow Preview Gen
     console.log("[Editor] Queueing preview save", {
       drawingId: id,
       fileCount: Object.keys(filesSnapshot).length,
@@ -1049,8 +1023,6 @@ export const Editor: React.FC = () => {
     }
   }, [debouncedSave, debouncedSavePreview, broadcastChanges, id, resolveSafeSnapshot]);
 
-  // Ensure file-only updates (e.g. pasted image dataURL arriving asynchronously)
-  // are still broadcast to collaborators AND persisted to the server.
   useEffect(() => {
     if (!id || !isReady) return;
 
@@ -1063,7 +1035,6 @@ export const Editor: React.FC = () => {
       const nextFiles = excalidrawAPI.current.getFiles?.() || {};
       const didEmit = emitFilesDeltaIfNeeded(nextFiles);
 
-      // Persist after file data becomes available (covers the "tab 3" case).
       if (didEmit && latestAppStateRef.current && debouncedSaveRef.current) {
         hasSceneChangesSinceLoadRef.current = true;
         debouncedSaveRef.current(id, latestElementsRef.current, latestAppStateRef.current, nextFiles);
@@ -1094,13 +1065,11 @@ export const Editor: React.FC = () => {
     }
   };
 
-  // Handle library changes and persist to server
   const handleLibraryChange = useCallback((items: readonly any[]) => {
     console.log("[Editor] Library changed", { itemCount: items.length });
     debouncedSaveLibrary([...items]);
   }, [debouncedSaveLibrary]);
 
-  // Disable native Excalidraw save dialogs
 
   const handleBackClick = async () => {
     if (isSavingOnLeave) return; // Prevent double clicks
@@ -1108,10 +1077,8 @@ export const Editor: React.FC = () => {
     setIsSavingOnLeave(true);
     let shouldNavigate = false;
 
-    // Save drawing and generate preview before navigating
     try {
       if (!(excalidrawAPI.current && saveDataRef.current && savePreviewRef.current)) {
-        // If editor API is not ready, allow navigation instead of trapping the user.
         shouldNavigate = true;
       } else if (!hasSceneChangesSinceLoadRef.current) {
         console.log("[Editor] Skipping back-navigation save: no scene changes since load", {

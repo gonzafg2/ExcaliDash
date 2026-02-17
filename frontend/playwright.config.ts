@@ -18,8 +18,6 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
   ],
-  // Note: In CI, webServer will start both backend and frontend
-  // Locally, you may need to start them manually or use npm run dev
   webServer: process.env.CI ? [
     {
       command: "cd ../backend && DATABASE_URL=file:./dev.db npm run dev",

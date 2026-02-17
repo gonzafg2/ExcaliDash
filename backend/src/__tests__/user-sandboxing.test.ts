@@ -17,7 +17,6 @@ import { PrismaClient } from "../generated/client";
 
 let prisma: PrismaClient;
 
-// These tests verify the data isolation logic at the database query level
 describe("User Data Sandboxing", () => {
   let userA: { id: string; email: string };
   let userB: { id: string; email: string };
@@ -26,7 +25,6 @@ describe("User Data Sandboxing", () => {
     setupTestDb();
     prisma = getTestPrisma();
 
-    // Create two test users
     const hashA = await bcrypt.hash("passwordA", 10);
     const hashB = await bcrypt.hash("passwordB", 10);
 
@@ -62,7 +60,6 @@ describe("User Data Sandboxing", () => {
 
   describe("Drawing isolation", () => {
     it("should not return User A's drawings when querying as User B", async () => {
-      // Create a drawing for User A
       await prisma.drawing.create({
         data: {
           name: "User A Drawing",
@@ -72,7 +69,6 @@ describe("User Data Sandboxing", () => {
         },
       });
 
-      // Query as User B - should get 0 results
       const userBDrawings = await prisma.drawing.findMany({
         where: { userId: userB.id },
       });
@@ -81,7 +77,6 @@ describe("User Data Sandboxing", () => {
     });
 
     it("should only return the owning user's drawings", async () => {
-      // Create drawings for both users
       await prisma.drawing.create({
         data: {
           name: "User A Drawing",
@@ -124,7 +119,6 @@ describe("User Data Sandboxing", () => {
         },
       });
 
-      // Simulate the findFirst query used in GET /drawings/:id
       const result = await prisma.drawing.findFirst({
         where: {
           id: drawing.id,
@@ -160,7 +154,6 @@ describe("User Data Sandboxing", () => {
         },
       });
 
-      // Simulate the findFirst query used in PUT /collections/:id
       const result = await prisma.collection.findFirst({
         where: {
           id: collection.id,
@@ -174,8 +167,6 @@ describe("User Data Sandboxing", () => {
 
   describe("Cache key user scoping", () => {
     it("should generate different cache keys for different users with same query params", () => {
-      // This tests the buildDrawingsCacheKey function logic inline
-      // The function was updated to include userId in the cache key
       const buildDrawingsCacheKey = (keyParts: {
         userId: string;
         searchTerm: string;

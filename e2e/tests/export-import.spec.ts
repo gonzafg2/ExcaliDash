@@ -26,7 +26,6 @@ test.describe("Export Functionality", () => {
       try {
         await deleteDrawing(request, id);
       } catch {
-        // Ignore cleanup errors
       }
     }
     createdDrawingIds = [];
@@ -35,18 +34,15 @@ test.describe("Export Functionality", () => {
       try {
         await deleteCollection(request, id);
       } catch {
-        // Ignore cleanup errors
       }
     }
     createdCollectionIds = [];
   });
 
   test("should show backup export controls on Settings page", async ({ page, request }) => {
-    // Create a drawing to ensure there's data to export
     const drawing = await createDrawing(request, { name: `Export_Backup_${Date.now()}` });
     createdDrawingIds.push(drawing.id);
 
-    // Navigate to Settings
     await page.goto("/settings");
     await page.waitForLoadState("networkidle");
 
@@ -59,7 +55,6 @@ test.describe("Export Functionality", () => {
   });
 
   test("should export .excalidash via API", async ({ request }) => {
-    // Create test data
     const drawing = await createDrawing(request, { name: `Export_API_${Date.now()}` });
     createdDrawingIds.push(drawing.id);
 
@@ -94,13 +89,11 @@ test.describe.serial("Import Functionality", () => {
   let createdDrawingIds: string[] = [];
 
   test.afterEach(async ({ request }) => {
-    // Clean up any drawings created via import
     const testDrawings = await listDrawings(request, { search: "Import_" });
     for (const drawing of testDrawings) {
       try {
         await deleteDrawing(request, drawing.id);
       } catch {
-        // Ignore cleanup errors
       }
     }
 
@@ -108,7 +101,6 @@ test.describe.serial("Import Functionality", () => {
       try {
         await deleteDrawing(request, id);
       } catch {
-        // Ignore cleanup errors
       }
     }
     createdDrawingIds = [];
@@ -126,7 +118,6 @@ test.describe.serial("Import Functionality", () => {
     await page.goto("/");
     await page.waitForLoadState("networkidle");
 
-    // Create fixture content
     const fixtureContent = JSON.stringify({
       type: "excalidraw",
       version: 2,
@@ -166,29 +157,20 @@ test.describe.serial("Import Functionality", () => {
       files: {}
     });
 
-    // Write temp file
-    // tempFile was here
 
-    // Use page.evaluate to check if we can proceed
-    // Actually, Playwright has setInputFiles which can handle this
 
-    // Find the import file input
     const fileInput = page.locator("#dashboard-import");
 
-    // Create a buffer from the fixture content
     await fileInput.setInputFiles({
       name: `Import_ExcalidrawTest_${Date.now()}.excalidraw`,
       mimeType: "application/json",
       buffer: Buffer.from(fixtureContent),
     });
 
-    // Wait for upload to complete - the UploadStatus component shows "Done" when finished
     await expect(page.getByText("Uploads (Done)")).toBeVisible({ timeout: 10000 });
 
-    // Reload to ensure dashboard state reflects the newly imported drawing
     await page.reload({ waitUntil: "networkidle" });
 
-    // Verify the drawing was imported - the drawing name is the filename without extension
     await page.getByPlaceholder("Search drawings...").fill("Import_ExcalidrawTest");
     await page.waitForTimeout(1000);
 
@@ -203,7 +185,6 @@ test.describe.serial("Import Functionality", () => {
     const timestamp = Date.now();
     const testName = `Import_JSONTest_${timestamp}`;
 
-    // Create a valid excalidraw JSON file with required fields
     const jsonContent = JSON.stringify({
       type: "excalidraw",
       version: 2,
@@ -249,26 +230,21 @@ test.describe.serial("Import Functionality", () => {
       buffer: Buffer.from(jsonContent),
     });
 
-    // Wait for upload to complete - the UploadStatus component shows "Done" when finished
     await expect(page.getByText("Uploads (Done)")).toBeVisible({ timeout: 15000 });
 
-    // Check if upload failed (shows "Failed" text in the upload status)
     const failedIndicator = page.getByText("Failed");
     if (await failedIndicator.isVisible()) {
       console.log("Import failed - skipping rest of test");
       return;
     }
 
-    // Reload to force a fresh fetch of drawings after import
     await page.reload({ waitUntil: "networkidle" });
 
-    // Clear any existing search and search for the imported drawing
     const searchInput = page.getByPlaceholder("Search drawings...");
     await searchInput.clear();
     await searchInput.fill(testName);
     await page.waitForTimeout(1500);
 
-    // Wait for the card to appear - the drawing should be visible in the UI
     const importedCards = page.locator("[id^='drawing-card-']");
     await expect(importedCards.first()).toBeVisible({ timeout: 15000 });
   });
@@ -277,7 +253,6 @@ test.describe.serial("Import Functionality", () => {
     await page.goto("/");
     await page.waitForLoadState("networkidle");
 
-    // Create an invalid file
     const invalidContent = "this is not valid JSON or excalidraw format {}{}";
 
     const fileInput = page.locator("#dashboard-import");
@@ -288,9 +263,7 @@ test.describe.serial("Import Functionality", () => {
       buffer: Buffer.from(invalidContent),
     });
 
-    // Wait for upload to complete and check for failure indicator
     await expect(page.getByText("Uploads (Done)")).toBeVisible({ timeout: 10000 });
-    // Should show "Failed" status in the upload status component
     await expect(page.getByText("Failed")).toBeVisible();
   });
 
@@ -328,10 +301,8 @@ test.describe.serial("Import Functionality", () => {
     const fileInput = page.locator("#dashboard-import");
     await fileInput.setInputFiles(files);
 
-    // Wait for upload to complete - the UploadStatus component shows "Done" when finished
     await expect(page.getByText("Uploads (Done)")).toBeVisible({ timeout: 10000 });
 
-    // Verify both were imported by searching for the unique prefix
     await page.getByPlaceholder("Search drawings...").fill(searchPrefix);
     await page.waitForTimeout(500);
 
@@ -342,11 +313,8 @@ test.describe.serial("Import Functionality", () => {
 
 test.describe("Database Import Verification", () => {
   test("should verify SQLite import endpoint exists", async ({ request }) => {
-    // Test that the verification endpoint responds
-    // We don't actually import a database as that would affect the test environment
     const response = await request.post(`${API_URL}/import/sqlite/legacy/verify`, {
       headers: await getCsrfHeaders(request),
-      // Send empty form data to test endpoint exists
       multipart: {
         db: {
           name: "test.sqlite",
@@ -356,8 +324,6 @@ test.describe("Database Import Verification", () => {
       },
     });
 
-    // Should get an error response since the file is empty/invalid
-    // But the endpoint should exist
     expect([400, 500]).toContain(response.status());
   });
 });

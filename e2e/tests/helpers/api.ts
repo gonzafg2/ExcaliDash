@@ -1,6 +1,5 @@
 import { APIRequestContext, expect } from "@playwright/test";
 
-// Default ports match the Playwright config
 const DEFAULT_BACKEND_PORT = 8000;
 
 export const API_URL = process.env.API_URL || `http://localhost:${DEFAULT_BACKEND_PORT}`;
@@ -156,8 +155,6 @@ export async function createDrawing(
     data: payload,
   });
 
-  // Retry once with a fresh token in case it expired or the cache was primed under
-  // a different clientId (rare, but can happen under parallelism / CI proxies).
   if (!response.ok() && response.status() === 403) {
     await refreshCsrfInfo(request);
     const retryHeaders = await withCsrfHeaders(request, {
@@ -232,7 +229,6 @@ export async function deleteDrawing(
   }
 
   if (!response.ok()) {
-    // Ignore not found to keep cleanup idempotent
     if (response.status() !== 404) {
       const text = await response.text();
       throw new Error(`Failed to delete drawing ${id}: ${response.status()} ${text}`);

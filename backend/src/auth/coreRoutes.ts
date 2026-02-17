@@ -183,7 +183,6 @@ export const registerCoreRoutes = (deps: RegisterCoreRoutesDeps) => {
         );
         return res.status(400).json({
           error: "Validation error",
-          // Surface the first validation message for better UX (e.g., password policy in production).
           message: messages[0] || "Invalid registration data",
           details: {
             formErrors: flattened.formErrors,

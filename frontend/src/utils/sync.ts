@@ -4,13 +4,10 @@ export const reconcileElements = (
 ): any[] => {
   const localMap = new Map<string, any>();
 
-  // Index local elements
   localElements.forEach((el) => {
     localMap.set(el.id, el);
   });
 
-  // Merge remote elements
-  // Prefer version + updated timestamp to determine ordering; nonces are random.
   const getVersion = (element: any) => element?.version ?? 0;
   const getVersionNonce = (element: any) => element?.versionNonce ?? 0;
   const getUpdated = (element: any) => {

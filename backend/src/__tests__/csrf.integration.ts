@@ -20,7 +20,6 @@ import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 const SHARED_SECRET = "test-shared-csrf-secret";
 
 beforeAll(() => {
-  // Must be shared across instances/pods for horizontal scaling.
   process.env.CSRF_SECRET = SHARED_SECRET;
 });
 
@@ -36,7 +35,6 @@ describe("CSRF - stateless HMAC tokens", () => {
     const token = createCsrfToken(clientId);
 
     expect(typeof token).toBe("string");
-    // base64url(payload).base64url(signature)
     expect(token).toMatch(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
     expect(validateCsrfToken(clientId, token)).toBe(true);
   });
@@ -66,7 +64,6 @@ describe("CSRF - stateless HMAC tokens", () => {
 
     expect(validateCsrfToken(clientId, token)).toBe(true);
     revokeCsrfToken(clientId);
-    // Stateless token remains valid until expiry
     expect(validateCsrfToken(clientId, token)).toBe(true);
   });
 
@@ -80,7 +77,6 @@ describe("CSRF - stateless HMAC tokens", () => {
     const token = createCsrfToken(clientId);
     expect(validateCsrfToken(clientId, token)).toBe(true);
 
-    // 24h + 1ms later
     vi.setSystemTime(new Date("2025-01-02T00:00:00.001Z"));
     expect(validateCsrfToken(clientId, token)).toBe(false);
   });
@@ -94,7 +90,6 @@ describe("CSRF - horizontal scaling (simulated pods)", () => {
     const podA = await import("../security");
     const token = podA.createCsrfToken(clientId);
 
-    // Simulate a different pod (new Node.js process / fresh module state)
     vi.resetModules();
     const podB = await import("../security");
 
@@ -114,10 +109,8 @@ describe("CSRF - horizontal scaling (simulated pods)", () => {
       pods.push(await import("../security"));
     }
 
-    // Token issued on one pod
     const token = pods[0].createCsrfToken(clientId);
 
-    // Validate on alternating pods (simulates a non-sticky load balancer)
     const attempts = 60;
     let failures = 0;
 
@@ -149,7 +142,6 @@ describe("CSRF - referer origin parsing", () => {
       getOriginFromReferer("https://example.com.evil.com/anything")
     ).toBe("https://example.com.evil.com");
 
-    // `startsWith("https://example.com")` would incorrectly allow this.
     expect(getOriginFromReferer("https://example.com@evil.com/anything")).toBe(
       "https://evil.com"
     );

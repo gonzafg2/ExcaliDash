@@ -40,7 +40,6 @@ export const Layout: React.FC<LayoutProps> = ({
   const resizeMouseMoveHandlerRef = useRef<((e: MouseEvent) => void) | null>(null);
   const resizeMouseUpHandlerRef = useRef<(() => void) | null>(null);
 
-  // Handle mouse down on resize handle
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     setIsResizing(true);
@@ -74,7 +73,6 @@ export const Layout: React.FC<LayoutProps> = ({
     document.addEventListener('mouseup', handleMouseUp);
   };
 
-  // Cleanup event listeners on unmount
   useEffect(() => {
     return () => {
       if (resizeMouseMoveHandlerRef.current) {

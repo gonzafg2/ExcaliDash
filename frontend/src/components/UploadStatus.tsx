@@ -8,7 +8,6 @@ export const UploadStatus: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
 
-  // Auto-open when upload starts
   useEffect(() => {
     if (isUploading) {
       setIsOpen(true);

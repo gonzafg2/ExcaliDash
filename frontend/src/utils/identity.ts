@@ -134,7 +134,6 @@ const generateClientId = (): string => {
       .join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
   }
 
-  // Final fallback for very old browsers; uniqueness window-scoped only.
   const perfNow =
     typeof globalThis !== "undefined" &&
     typeof globalThis.performance !== "undefined" &&
@@ -186,7 +185,6 @@ export const getUserIdentity = (): UserIdentity => {
         return normalized;
       }
     } catch {
-      // Fall through to regenerate identity.
     }
   }
 

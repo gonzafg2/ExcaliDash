@@ -6,7 +6,6 @@ import DOMPurify from "dompurify";
 import { JSDOM } from "jsdom";
 import crypto from "crypto";
 
-// Create a DOM environment for DOMPurify (Node.js compatibility)
 const window = new JSDOM("").window;
 const purify = DOMPurify(window);
 
@@ -18,12 +17,10 @@ export interface SecurityConfig {
   maxDataUrlSize: number;
 }
 
-// Default configuration
 const defaultConfig: SecurityConfig = {
   maxDataUrlSize: 10 * 1024 * 1024, // 10MB
 };
 
-// Current active configuration
 let activeConfig: SecurityConfig = { ...defaultConfig };
 
 /**
@@ -468,13 +465,10 @@ export const sanitizeDrawingData = (data: {
       sanitizedPreview = sanitizeSvg(sanitizedPreview);
     }
 
-    // Sanitize files object with special handling for dataURL
     let sanitizedFiles = data.files;
     if (typeof sanitizedFiles === "object" && sanitizedFiles !== null) {
-      // Create a deep copy to avoid mutating the original input
       sanitizedFiles = structuredClone(sanitizedFiles);
 
-      // Safe image MIME types that we allow for dataURL (case-insensitive)
       const safeImageTypes = [
         "data:image/png",
         "data:image/jpeg",
@@ -483,14 +477,12 @@ export const sanitizeDrawingData = (data: {
         "data:image/webp",
       ];
 
-      // Dangerous URL protocols to block entirely
       const dangerousProtocols = [
         /^javascript:/i,
         /^vbscript:/i,
         /^data:text\/html/i,
       ];
 
-      // Suspicious patterns for security validation within data URLs
       const suspiciousPatterns = [
         /<script/i,
         /javascript:/i,
@@ -498,58 +490,45 @@ export const sanitizeDrawingData = (data: {
         /<iframe/i,
       ];
 
-      // Maximum size for dataURL (configurable, default 10MB to prevent DoS)
       const MAX_DATAURL_SIZE = activeConfig.maxDataUrlSize;
 
-      // Iterate over each file in the dictionary
       for (const fileId in sanitizedFiles) {
         const file = sanitizedFiles[fileId];
         if (typeof file === "object" && file !== null) {
-          // Sanitize each property of the file object
           for (const key in file) {
             const value = file[key];
             if (typeof value === "string") {
-              // Special handling for dataURL: allow it to be long if it's a valid image data URL
               if (key === "dataURL") {
                 const normalizedValue = value.toLowerCase();
 
-                // First, check for dangerous protocols - block these entirely
                 const hasDangerousProtocol = dangerousProtocols.some(
                   (pattern) => pattern.test(value)
                 );
 
                 if (hasDangerousProtocol) {
-                  // Block dangerous URLs entirely
                   file[key] = "";
                   continue;
                 }
 
-                // Check if it's a safe image type
                 const isSafeImageType = safeImageTypes.some((type) =>
                   normalizedValue.startsWith(type)
                 );
 
                 if (isSafeImageType) {
-                  // Check for suspicious content and size limits
                   const hasSuspiciousContent = suspiciousPatterns.some(
                     (pattern) => pattern.test(value)
                   );
                   const isTooLarge = value.length > MAX_DATAURL_SIZE;
 
                   if (hasSuspiciousContent || isTooLarge) {
-                    // Clear suspicious or oversized data URLs
                     file[key] = "";
                   } else {
-                    // Keep the base64-encoded image data URL as-is
                     file[key] = value;
                   }
                 } else {
-                  // Not a safe image type and not a dangerous protocol
-                  // Sanitize as text but this likely means it's invalid anyway
                   file[key] = sanitizeText(value, 1000);
                 }
               } else {
-                // For all other string fields (id, mimeType, etc.), apply strict sanitization
                 file[key] = sanitizeText(value, 1000);
               }
             }
@@ -594,9 +573,6 @@ export const validateImportedDrawing = (data: any): boolean => {
   }
 };
 
-// ============================================================================
-// CSRF Protection
-// ============================================================================
 
 const CSRF_TOKEN_HEADER = "x-csrf-token";
 const CSRF_TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -614,7 +590,6 @@ const getCsrfSecret = (): Buffer => {
     return cachedCsrfSecret;
   }
 
-  // Fallback for local/single-instance setups.
   cachedCsrfSecret = crypto.randomBytes(32);
   const envLabel = process.env.NODE_ENV ? ` (${process.env.NODE_ENV})` : "";
   console.warn(
@@ -694,9 +669,7 @@ export const validateCsrfToken = (clientId: string, token: string): boolean => {
     }
 
     const now = Date.now();
-    // Expiry check
     if (now - payload.ts > CSRF_TOKEN_EXPIRY_MS) return false;
-    // Future skew check (clock mismatch)
     if (payload.ts - now > CSRF_TOKEN_FUTURE_SKEW_MS) return false;
 
     const expectedSig = signCsrfToken(clientId, {
@@ -714,9 +687,6 @@ export const validateCsrfToken = (clientId: string, token: string): boolean => {
 };
 
 export const revokeCsrfToken = (clientId: string): void => {
-  // Stateless CSRF tokens cannot be selectively revoked without shared state.
-  // If revocation is required, implement token blacklisting in a shared store
-  // (e.g., Redis) or rotate CSRF_SECRET.
   void clientId;
 };
 

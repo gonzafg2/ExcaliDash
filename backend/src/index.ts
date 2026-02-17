@@ -63,7 +63,6 @@ console.log("Allowed origins:", allowedOrigins);
 
 const isDev = (process.env.NODE_ENV || "development") !== "production";
 const isLocalDevOrigin = (origin: string): boolean => {
-  // Allow any localhost/127.0.0.1 port in dev (Vite often picks a free port).
   return (
     /^http:\/\/localhost:\d+$/i.test(origin) ||
     /^http:\/\/127\.0\.0\.1:\d+$/i.test(origin)
@@ -110,9 +109,6 @@ const initializeUploadDir = async () => {
 
 const app = express();
 
-// Trust proxy headers (X-Forwarded-For, X-Real-IP) only when explicitly configured.
-// Safe default is disabled to avoid spoofed client IPs when running without a trusted proxy.
-// Set TRUST_PROXY=1 (or a specific hop count) when deploying behind reverse proxies.
 const trustProxyConfig = (process.env.TRUST_PROXY ?? "false").trim();
 const parsedProxyHops = Number.parseInt(trustProxyConfig, 10);
 const trustProxyValue =
@@ -190,7 +186,6 @@ const ensureTrashCollection = async (
     });
   }
 
-  // Legacy migration: move this user's drawings off global "trash".
   await db.drawing.updateMany({
     where: { userId, collectionId: "trash" },
     data: { collectionId: trashCollectionId },
@@ -218,7 +213,6 @@ const upload = multer({
   },
 });
 
-// Request ID middleware (must be early in the chain)
 app.use((req, res, next) => {
   const requestId = uuidv4();
   req.headers["x-request-id"] = requestId;
@@ -226,7 +220,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// HTTPS enforcement in production only when configured frontend origins use HTTPS.
 const shouldEnforceHttps =
   config.nodeEnv === "production" &&
   allowedOrigins.some((origin) => origin.toLowerCase().startsWith("https://"));
@@ -241,7 +234,6 @@ if (shouldEnforceHttps) {
   });
 }
 
-// Helmet security headers
 app.use(
   helmet({
     contentSecurityPolicy: {
@@ -284,7 +276,6 @@ app.use(
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
-// Request logging middleware
 app.use((req, res, next) => {
   const requestId = req.headers["x-request-id"] || "unknown";
   const contentLength = req.headers["content-length"];
@@ -310,7 +301,6 @@ app.use((req, res, next) => {
 
 const RATE_LIMIT_WINDOW = 15 * 60 * 1000;
 
-// General rate limiting with express-rate-limit
 const generalRateLimiter = rateLimit({
   windowMs: RATE_LIMIT_WINDOW,
   max: config.rateLimitMaxRequests,
@@ -320,13 +310,8 @@ const generalRateLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  // We intentionally allow `app.set("trust proxy", true)` for deployments with multiple proxy layers.
-  // express-rate-limit warns (and can throw) in that configuration; we accept the risk in favor of
-  // correct client IP handling and rely on deployment-level network controls.
   validate: {
     trustProxy: false,
-    // In Docker + nginx (frontend proxy), X-Forwarded-For is commonly present even when TRUST_PROXY=false.
-    // Disable this validation to avoid throwing and breaking requests in that deployment mode.
     xForwardedForHeader: false,
   },
 });
@@ -340,10 +325,8 @@ registerCsrfProtection({
   enableDebugLogging: process.env.DEBUG_CSRF === "true",
 });
 
-// Authentication routes (no CSRF required, uses JWT)
 app.use("/auth", authRouter);
 
-// Files field can contain arbitrary file metadata, so we use unknown and validate structure
 const filesFieldSchema = z
   .union([z.record(z.string(), z.unknown()), z.null()])
   .optional()
@@ -423,11 +406,9 @@ export const sanitizeDrawingUpdateData = (
       if (data.preview !== undefined) sanitizedData.preview = sanitized.preview;
       Object.assign(data, sanitizedData);
     } else if (hasPreviewField && typeof data.preview === "string") {
-      // Preview-only updates must not inject default scene fields.
       data.preview = sanitizeSvg(data.preview);
       Object.assign(data, { ...data, preview: data.preview });
     } else if (hasPreviewField && data.preview === null) {
-      // Explicitly allow clearing preview without touching scene data.
       Object.assign(data, sanitizedData);
     }
     return true;
@@ -451,7 +432,6 @@ const respondWithValidationErrors = (
   res: express.Response,
   issues: z.ZodIssue[]
 ) => {
-  // In production, don't expose validation details
   if (config.nodeEnv === "production") {
     res.status(400).json({
       error: "Validation error",
@@ -465,7 +445,6 @@ const respondWithValidationErrors = (
   }
 };
 
-// Collection name validation schema
 const collectionNameSchema = z.string().trim().min(1).max(100);
 
 const validateSqliteHeader = (filePath: string): boolean => {
@@ -564,15 +543,7 @@ app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok" });
 });
 
-// Health check endpoint doesn't require auth
 
-// During upgrades, the browser may have an older frontend cached (index.html and JS bundles).
-// If auth onboarding is pending, block all app API routes so users are forced onto the
-// v0.4+ UI to complete "Choose Authentication Mode" before interacting with data.
-//
-// This is intentionally strict in production: it prevents users from continuing to use
-// pre-auth UI behavior while the instance is in an undefined onboarding state.
-// Disabled in tests/dev to avoid interfering with integration tests and local workflows.
 const enableOnboardingGate =
   config.authMode === "local" &&
   config.nodeEnv === "production" &&
@@ -620,7 +591,6 @@ if (enableOnboardingGate) {
       const required = await isAuthOnboardingRequired();
       if (!required) return next();
 
-      // Best-effort cache eviction to reduce "old UI keeps working" after upgrade.
       res.setHeader("Clear-Site-Data", "\"cache\"");
       return res.status(409).json({
         error: "Authentication onboarding required",
@@ -631,7 +601,6 @@ if (enableOnboardingGate) {
       });
     } catch (error) {
       console.error("Auth onboarding gate error:", error);
-      // Fail open to avoid hard bricking the app if the gate check itself fails.
       return next();
     }
   });
@@ -682,7 +651,6 @@ registerImportExportRoutes({
   MAX_IMPORT_TOTAL_EXTRACTED_BYTES,
 });
 
-// Error handler middleware (must be last)
 app.use(errorHandler);
 
 export { app, httpServer };

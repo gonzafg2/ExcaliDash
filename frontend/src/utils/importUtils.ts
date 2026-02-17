@@ -62,15 +62,12 @@ export const importDrawings = async (
   let failCount = 0;
   const errors: string[] = [];
 
-  // Build a map from drawingFile index to original file index for progress reporting
   const originalIndexMap = new Map<number, number>();
   drawingFiles.forEach((df, i) => {
     const originalIndex = files.indexOf(df);
     originalIndexMap.set(i, originalIndex);
   });
 
-  // We process files in parallel (Promise.all) but we could limit concurrency if needed.
-  // For now, full parallel is fine as browser limits connection count anyway.
   await Promise.all(
     drawingFiles.map(async (file, drawingIndex) => {
       const fileIndex = originalIndexMap.get(drawingIndex) ?? drawingIndex;
@@ -110,7 +107,6 @@ export const importDrawings = async (
 
         await api.post("/drawings", payload, {
           headers: {
-            // Backend uses this header to apply stricter validation for imported files.
             "X-Imported-File": "true",
           },
           onUploadProgress: (progressEvent) => {
@@ -171,8 +167,6 @@ export const importLegacyFiles = async (
     return { success: 0, failed: 0, errors: ["No supported files found."] };
   }
 
-  // If there's a legacy export JSON among the selected files, import it separately.
-  // (We still allow mixing with individual .excalidraw files.)
   let successCount = 0;
   let failCount = 0;
   const errors: string[] = [];
@@ -183,7 +177,6 @@ export const importLegacyFiles = async (
     originalIndexMap.set(i, originalIndex);
   });
 
-  // Pre-load existing collections once (for legacy export import mapping by name)
   let existingCollectionsByLowerName: Map<string, string> | null = null;
   const ensureCollectionsIndex = async () => {
     if (existingCollectionsByLowerName) return;
@@ -228,7 +221,6 @@ export const importLegacyFiles = async (
             throw new Error("Legacy export JSON contains no drawings.");
           }
 
-          // Import each drawing entry
           for (let i = 0; i < drawings.length; i += 1) {
             const d = drawings[i] as LegacyExportDrawing;
             const elements = Array.isArray(d.elements) ? (d.elements as any[]) : null;
@@ -294,7 +286,6 @@ export const importLegacyFiles = async (
           return;
         }
 
-        // Single Excalidraw drawing json
         if (
           typeof parsed === "object" &&
           parsed !== null &&

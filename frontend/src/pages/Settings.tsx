@@ -78,12 +78,10 @@ export const Settings: React.FC = () => {
             );
 
             if (response.data.authEnabled) {
-                // Auth enabled -> bootstrap registration only when required.
                 window.location.href = response.data.bootstrapRequired ? '/register' : '/login';
                 return;
             }
 
-            // Auth disabled -> reload to drop auth gating.
             window.location.reload();
         } catch (err: unknown) {
             let message = 'Failed to update authentication setting';

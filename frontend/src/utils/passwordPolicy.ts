@@ -20,12 +20,10 @@ export const STRONG_PASSWORD_MESSAGE =
 export const strongPasswordPattern =
   /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{12,100}$/;
 
-// HTML <input pattern="..."> does not use JS regex literals, so we keep a string form handy.
 export const strongPasswordPatternHtml =
   "(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9]).{12,100}";
 
 export const getPasswordPolicy = (opts?: { strong?: boolean }): PasswordPolicy => {
-  // Default to the strong policy everywhere so dev/test behave like production without flags.
   const strong = typeof opts?.strong === "boolean" ? opts.strong : true;
   if (strong) {
     return {

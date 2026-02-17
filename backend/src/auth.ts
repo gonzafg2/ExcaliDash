@@ -204,8 +204,6 @@ export const createAuthRouter = (deps: CreateAuthRouterDeps): express.Router => 
       legacyHeaders: false,
       validate: {
         trustProxy: false,
-        // When running behind a proxy that sets X-Forwarded-For (e.g. nginx),
-        // express-rate-limit can throw if Express trust proxy is disabled.
         xForwardedForHeader: false,
       },
       store,
@@ -259,7 +257,6 @@ export const createAuthRouter = (deps: CreateAuthRouterDeps): express.Router => 
     const keys = loginIdentifierKeyIndex.get(normalizedIdentifier);
     try {
       if (!keys || keys.size === 0) {
-        // Backward-compatible fallback for pre-change key format.
         await loginAttemptLimiter?.resetKey(`login:${normalizedIdentifier}`);
         return;
       }

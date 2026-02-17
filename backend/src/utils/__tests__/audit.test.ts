@@ -22,7 +22,6 @@ describe("Audit Logging", () => {
     setupTestDb();
     testUser = await initTestDb(prisma);
     setAuditPrismaProvider(() => prisma);
-    // Enable audit logging for tests
     process.env.ENABLE_AUDIT_LOGGING = "true";
   });
 
@@ -33,7 +32,6 @@ describe("Audit Logging", () => {
   });
 
   beforeEach(async () => {
-    // Clean up audit logs before each test
     await prisma.auditLog.deleteMany({});
   });
 
@@ -97,13 +95,10 @@ describe("Audit Logging", () => {
     });
 
     it("should gracefully handle when feature is disabled", async () => {
-      // Note: Config is cached, so we test the graceful error handling instead
-      // by checking that errors don't propagate
       const auditData: AuditLogData = {
         action: "should_not_log_disabled",
       };
 
-      // Should not throw even if feature is disabled or table missing
       await expect(logAuditEvent(auditData)).resolves.not.toThrow();
     });
 
@@ -132,7 +127,6 @@ describe("Audit Logging", () => {
 
   describe("getAuditLogs", () => {
     beforeEach(async () => {
-      // Create some test audit logs
       await prisma.auditLog.createMany({
         data: [
           {
@@ -164,7 +158,6 @@ describe("Audit Logging", () => {
     });
 
     it("should retrieve all audit logs when userId is not provided", async () => {
-      // Create a log for another user
       const otherUser = await createTestUser(prisma, "other@example.com");
       await prisma.auditLog.create({
         data: {

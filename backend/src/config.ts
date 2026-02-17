@@ -20,7 +20,6 @@ interface Config {
   csrfMaxRequests: number;
   csrfSecret: string | null;
   oidc: OidcConfig;
-  // Feature flags - all default to false for backward compatibility
   enablePasswordReset: boolean;
   enableRefreshTokenRotation: boolean;
   enableAuditLogging: boolean;
@@ -109,7 +108,6 @@ const resolveDatabaseUrl = (rawUrl?: string) => {
   return `file:${absolutePath}`;
 };
 
-// Ensure DATABASE_URL is resolved before any PrismaClient is created.
 process.env.DATABASE_URL = resolveDatabaseUrl(process.env.DATABASE_URL);
 
 const getOptionalBoolean = (key: string, defaultValue: boolean): boolean => {
@@ -199,7 +197,6 @@ export const config: Config = {
   csrfMaxRequests: getRequiredEnvNumber("CSRF_MAX_REQUESTS", 60),
   csrfSecret: process.env.CSRF_SECRET || null,
   oidc: resolveOidcConfig(resolvedAuthMode),
-  // Feature flags
   enablePasswordReset: getOptionalBoolean("ENABLE_PASSWORD_RESET", false),
   enableRefreshTokenRotation: getOptionalBoolean("ENABLE_REFRESH_TOKEN_ROTATION", true),
   enableAuditLogging: getOptionalBoolean("ENABLE_AUDIT_LOGGING", false),
@@ -207,7 +204,6 @@ export const config: Config = {
   bootstrapSetupCodeMaxAttempts: getRequiredEnvNumber("BOOTSTRAP_SETUP_CODE_MAX_ATTEMPTS", 10),
 };
 
-// Validate JWT_SECRET strength in production
 if (config.nodeEnv === "production") {
   const normalizedSecret = config.jwtSecret.trim();
   const insecureJwtSecretPlaceholders = new Set([

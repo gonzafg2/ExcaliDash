@@ -37,7 +37,6 @@ export interface AuditLogResult {
  */
 export const logAuditEvent = async (data: AuditLogData): Promise<void> => {
   try {
-    // Check if audit logging is enabled via config
     const { config } = await import("../config");
     if (!config.enableAuditLogging) {
       return; // Feature disabled, silently skip
@@ -54,9 +53,6 @@ export const logAuditEvent = async (data: AuditLogData): Promise<void> => {
       },
     });
   } catch (error) {
-    // Don't fail the request if audit logging fails
-    // This handles cases where the table doesn't exist (feature disabled)
-    // or other database errors
     if (process.env.NODE_ENV === "development") {
       console.debug("Audit logging skipped (feature disabled or table missing):", error);
     }
@@ -72,7 +68,6 @@ export const getAuditLogs = async (
   limit: number = 100
 ): Promise<AuditLogResult[]> => {
   try {
-    // Check if audit logging is enabled via config
     const { config } = await import("../config");
     if (!config.enableAuditLogging) {
       return []; // Feature disabled, return empty array
@@ -105,7 +100,6 @@ export const getAuditLogs = async (
       })(),
     }));
   } catch (error) {
-    // Gracefully handle missing table or other errors
     if (process.env.NODE_ENV === "development") {
       console.debug("Failed to retrieve audit logs (feature disabled or table missing):", error);
     }

@@ -8,7 +8,6 @@
 import { describe, it, expect } from "vitest";
 import { type ExportData } from "../exportUtils";
 
-// Helper to create a large base64 data URL (similar to real images)
 const createLargeDataUrl = (size: number = 50000): string => {
   const baseImage = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
   const repetitions = Math.ceil(size / baseImage.length);
@@ -49,7 +48,6 @@ describe("ExportData JSON Serialization - Issue #17 Regression", () => {
     it("should preserve large image data URLs (>10000 chars) through JSON round-trip - REGRESSION TEST", () => {
       const largeDataUrl = createLargeDataUrl(50000);
       
-      // Verify this is actually a large data URL
       expect(largeDataUrl.length).toBeGreaterThan(10000);
       
       const exportData: ExportData = {
@@ -78,17 +76,13 @@ describe("ExportData JSON Serialization - Issue #17 Regression", () => {
         },
       };
 
-      // Serialize to JSON (what happens when saving/exporting)
       const jsonString = JSON.stringify(exportData, null, 2);
       
-      // Parse back (what happens when loading/importing)
       const parsed: ExportData = JSON.parse(jsonString);
 
-      // THE KEY ASSERTIONS for issue #17
       expect(parsed.files["file-1"].dataURL).toBe(largeDataUrl);
       expect(parsed.files["file-1"].dataURL.length).toBe(largeDataUrl.length);
       
-      // Verify the data URL is still valid format
       expect(parsed.files["file-1"].dataURL).toMatch(/^data:image\/png;base64,/);
     });
 
@@ -191,7 +185,6 @@ describe("ExportData JSON Serialization - Issue #17 Regression", () => {
       const jsonString = JSON.stringify(exportData);
       const parsed: ExportData = JSON.parse(jsonString);
 
-      // This would have been truncated with the old buggy code
       expect(parsed.files["over-limit-test"].dataURL.length).toBe(10001);
     });
   });
@@ -235,16 +228,10 @@ describe("ExportData JSON Serialization - Issue #17 Regression", () => {
 
 describe("Issue #17 Full Scenario Simulation", () => {
   it("should simulate the complete save/reload cycle that caused the bug", () => {
-    // This test simulates the exact scenario from issue #17:
-    // 1. User uploads an image to their drawing
-    // 2. The drawing is saved to the server
-    // 3. User closes and reopens the drawing
-    // 4. The image should appear fully loaded, not truncated
     
     const largeImageDataUrl = createLargeDataUrl(50000);
     console.log(`Testing with image data URL of length: ${largeImageDataUrl.length}`);
     
-    // Step 1: Create the drawing data with an embedded image
     const originalDrawingData = {
       elements: [
         {
@@ -269,7 +256,6 @@ describe("Issue #17 Full Scenario Simulation", () => {
       },
     };
 
-    // Step 2: Simulate what the frontend does when saving
     const savePayload = {
       name: "My Drawing with Image",
       elements: originalDrawingData.elements,
@@ -277,23 +263,17 @@ describe("Issue #17 Full Scenario Simulation", () => {
       files: originalDrawingData.files,
     };
     
-    // Serialize to JSON (what gets sent to the API)
     const requestBody = JSON.stringify(savePayload);
 
-    // Step 3: Simulate what the backend returns after saving
-    // (In the buggy version, this is where the truncation happened)
     const savedData = JSON.parse(requestBody);
 
-    // Step 4: Simulate reloading the drawing
     const reloadedFiles = savedData.files;
     const reloadedDataUrl = reloadedFiles["user-uploaded-image"]?.dataURL;
 
-    // THE KEY ASSERTIONS - these would fail with the old buggy code
     expect(reloadedDataUrl).toBeDefined();
     expect(reloadedDataUrl.length).toBe(largeImageDataUrl.length);
     expect(reloadedDataUrl).toBe(largeImageDataUrl);
     
-    // Verify the base64 content is complete
     expect(reloadedDataUrl.startsWith("data:image/png;base64,")).toBe(true);
     
     console.log("✓ Issue #17 full scenario test passed - image data preserved correctly");

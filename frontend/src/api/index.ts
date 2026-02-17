@@ -9,14 +9,11 @@ export const api = axios.create({
   withCredentials: true,
 });
 
-// Re-export axios for type checking
 export { default as axios } from 'axios';
 export const isAxiosError = axios.isAxiosError;
 
-// Export api instance for direct use
 export { api as default };
 
-// Auth state persisted in local storage should remain non-sensitive.
 const USER_KEY = 'excalidash-user';
 const AUTH_ENABLED_CACHE_KEY = "excalidash-auth-enabled";
 const AUTH_STATUS_TTL_MS = 5000;
@@ -31,7 +28,6 @@ type RetriableRequestConfig = {
 
 let authEnabledProbeCache: { value: boolean; fetchedAt: number } | null = null;
 
-// CSRF Token Management
 let csrfToken: string | null = null;
 let csrfHeaderName: string = "x-csrf-token";
 let csrfTokenPromise: Promise<void> | null = null;
@@ -53,7 +49,6 @@ export const fetchCsrfToken = async (): Promise<void> => {
 const ensureCsrfToken = async (): Promise<void> => {
   if (csrfToken) return;
 
-  // Prevent multiple simultaneous token fetches
   if (!csrfTokenPromise) {
     csrfTokenPromise = fetchCsrfToken().finally(() => {
       csrfTokenPromise = null;
@@ -226,7 +221,6 @@ const redirectToLogin = async () => {
       return;
     }
   } catch {
-    // Best-effort status probe; fall through to legacy behavior.
   }
 
   const authEnabled = await getAuthEnabledStatus();
@@ -250,10 +244,8 @@ const refreshAccessToken = async (): Promise<void> => {
   return refreshPromise;
 };
 
-// Add request interceptor to include JWT and CSRF tokens
 api.interceptors.request.use(
   async (config) => {
-    // Auth endpoints that don't require authentication (login, register, etc.)
     const publicAuthEndpoints = [
       '/auth/refresh',
       '/auth/password-reset-request',
@@ -262,7 +254,6 @@ api.interceptors.request.use(
 
     const isPublicAuthEndpoint = config.url && publicAuthEndpoints.some(endpoint => config.url?.startsWith(endpoint));
 
-    // Only add CSRF token for state-changing methods (except public auth endpoints)
     const method = config.method?.toUpperCase();
     if (method && ["POST", "PUT", "DELETE", "PATCH"].includes(method) && !isPublicAuthEndpoint) {
       await ensureCsrfToken();
@@ -275,11 +266,9 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Add response interceptor to handle auth and CSRF token errors
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
-    // Handle must-reset-password enforcement (403)
     if (
       error.response?.status === 403 &&
       error.response?.data?.code === "MUST_RESET_PASSWORD"
@@ -297,7 +286,6 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    // Handle 401 Unauthorized (invalid/expired JWT)
     if (error.response?.status === 401) {
       const originalRequest = (error.config || {}) as RetriableRequestConfig;
       const url = String(originalRequest.url || "");
@@ -330,14 +318,12 @@ api.interceptors.response.use(
       }
     }
 
-    // If we get a 403 with CSRF error, clear token and retry once
     if (
       error.response?.status === 403 &&
       error.response?.data?.error?.includes("CSRF")
     ) {
       clearCsrfToken();
 
-      // Retry the request once with a fresh token
       const originalRequest = (error.config || {}) as RetriableRequestConfig;
       if (!originalRequest._csrfRetry) {
         originalRequest._csrfRetry = true;
@@ -526,9 +512,7 @@ export const deleteCollection = async (id: string) => {
   return response.data;
 };
 
-// --- Library ---
 
-// Library items are Excalidraw library items - dynamic structure from Excalidraw
 type LibraryItem = Record<string, unknown>;
 
 export const getLibrary = async (): Promise<LibraryItem[]> => {

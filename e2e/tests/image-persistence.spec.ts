@@ -23,7 +23,6 @@ import {
  */
 
 function generateLargeImageDataUrl(sizeInBytes: number = 50000): string {
-  // Create pseudo-random data that looks like base64
   const base64Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   let base64Data = "";
   for (let i = 0; i < sizeInBytes; i++) {
@@ -36,12 +35,10 @@ test.describe("Image Persistence - Browser E2E Tests", () => {
   let testDrawingIds: string[] = [];
 
   test.afterEach(async ({ request }) => {
-    // Clean up any drawings created during tests
     for (const id of testDrawingIds) {
       try {
         await deleteDrawing(request, id);
       } catch {
-        // Ignore cleanup errors
       }
     }
     testDrawingIds = [];
@@ -50,31 +47,25 @@ test.describe("Image Persistence - Browser E2E Tests", () => {
   test("should navigate to dashboard and see drawing list", async ({ page }) => {
     await page.goto("/");
 
-    // Wait for the page to load
     await expect(page).toHaveTitle(/ExcaliDash/i);
 
-    // The dashboard should show some UI elements
     await expect(page.locator("body")).toBeVisible();
   });
 
   test("should create a new drawing via UI", async ({ page }) => {
     await page.goto("/");
 
-    // Look for a "New Drawing" or similar button
     const newDrawingBtn = page.getByRole("button", { name: /new|create/i }).first();
 
     if (await newDrawingBtn.isVisible()) {
       await newDrawingBtn.click();
 
-      // Should navigate to editor or show a modal
       await page.waitForURL(/\/(editor|drawing)/i, { timeout: 5000 }).catch(() => {
-        // May stay on same page with modal
       });
     }
   });
 
   test("should preserve large image data through save/reload cycle via API", async ({ request }) => {
-    // This is the core regression test for issue #17
     const largeDataUrl = generateLargeImageDataUrl(50000);
     expect(largeDataUrl.length).toBeGreaterThan(10000);
 
@@ -87,18 +78,15 @@ test.describe("Image Persistence - Browser E2E Tests", () => {
       },
     };
 
-    // Create drawing with large image
     const createdDrawing = await createDrawing(request, {
       name: "E2E Test - Large Image",
       files,
     });
     testDrawingIds.push(createdDrawing.id);
 
-    // Retrieve the drawing
     const drawing = await getDrawing(request, createdDrawing.id);
     const savedFiles = drawing.files || {};  // Already parsed by API
 
-    // Verify the image data was preserved
     expect(savedFiles["test-image-1"]).toBeDefined();
     expect(savedFiles["test-image-1"].dataURL).toBe(largeDataUrl);
     expect(savedFiles["test-image-1"].dataURL.length).toBe(largeDataUrl.length);
@@ -107,38 +95,30 @@ test.describe("Image Persistence - Browser E2E Tests", () => {
   });
 
   test("should display drawing in editor view", async ({ page, request }) => {
-    // Create a test drawing first
     const createdDrawing = await createDrawing(request, {
       name: "E2E Test - Editor View",
     });
     testDrawingIds.push(createdDrawing.id);
 
-    // Navigate to the editor
     await page.goto(`/editor/${createdDrawing.id}`);
 
-    // Wait for the page to load
     await page.waitForLoadState("networkidle");
 
-    // The editor should be visible (Excalidraw canvas)
-    // Look for the Excalidraw container or canvas
     const editorContainer = page.locator("[class*='excalidraw'], canvas").first();
     await expect(editorContainer).toBeVisible({ timeout: 10000 });
   });
 
   test("should import .excalidraw file with embedded image", async ({ request }) => {
-    // Load the test fixture
     const fixturePath = path.join(__dirname, "..", "fixtures", "small-image.excalidraw");
     const fixtureContent = fs.readFileSync(fixturePath, "utf-8");
     const fixtureData = JSON.parse(fixtureContent);
 
-    // Create drawing via API with fixture data
     const createdDrawing = await createDrawing(request, {
       name: "E2E Test - Imported Image",
       files: fixtureData.files,
     });
     testDrawingIds.push(createdDrawing.id);
 
-    // Verify via API that image data was preserved
     const drawing = await getDrawing(request, createdDrawing.id);
     const savedFiles = drawing.files || {};  // Already parsed by API
 
@@ -177,7 +157,6 @@ test.describe("Image Persistence - Browser E2E Tests", () => {
     const drawing = await getDrawing(request, createdDrawing.id);
     const savedFiles = drawing.files || {};  // Already parsed by API
 
-    // Verify all images preserved correctly
     for (const [id, originalFile] of Object.entries(files)) {
       expect(savedFiles[id]).toBeDefined();
       expect(savedFiles[id].dataURL).toBe((originalFile as any).dataURL);
@@ -221,10 +200,8 @@ test.describe("Security - Malicious Content Blocking", () => {
     const drawing = await response.json();
     const savedFiles = drawing.files;  // Already parsed by API
 
-    // The malicious URL should be blocked/cleared
     expect(savedFiles["malicious-image"].dataURL).not.toContain("javascript:");
 
-    // Cleanup
     await request.delete(`${API_URL}/drawings/${drawing.id}`, {
       headers: await getCsrfHeaders(request),
     });
@@ -262,10 +239,8 @@ test.describe("Security - Malicious Content Blocking", () => {
     const drawing = await response.json();
     const savedFiles = drawing.files;  // Already parsed by API
 
-    // The script tag should be blocked
     expect(savedFiles["malicious-image"].dataURL).not.toContain("<script>");
 
-    // Cleanup
     await request.delete(`${API_URL}/drawings/${drawing.id}`, {
       headers: await getCsrfHeaders(request),
     });

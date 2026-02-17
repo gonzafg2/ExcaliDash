@@ -6,7 +6,6 @@ import { prisma as defaultPrisma } from "../db/prisma";
 import { createAuthModeService, type AuthModeService } from "../auth/authMode";
 import { ACCESS_TOKEN_COOKIE_NAME, readCookie } from "../auth/cookies";
 
-// Extend Express Request type to include user
 declare global {
   namespace Express {
     interface Request {
@@ -74,14 +73,12 @@ const verifyToken = (token: string): JwtPayload | null => {
 
 const normalizeRequestPath = (req: Request): string => {
   const raw = (req.originalUrl || req.url || "").split("?")[0] || "";
-  // In some deployments the backend may see a /api prefix.
   return raw.replace(/^\/api(?=\/)/, "");
 };
 
 const isAllowedWhileMustResetPassword = (req: Request): boolean => {
   const path = normalizeRequestPath(req);
 
-  // Permit fetching current user and changing password.
   if (req.method === "GET" && path === "/auth/me") return true;
   if (req.method === "POST" && path === "/auth/change-password") return true;
   if (req.method === "POST" && path === "/auth/must-reset-password") return true;
@@ -103,7 +100,6 @@ export const createAuthMiddleware = ({
     res: Response,
     next: NextFunction
   ): Promise<void> => {
-    // Single-user mode: authentication disabled -> treat all requests as the bootstrap user.
     try {
       const authEnabled = await authModeService.getAuthEnabled();
       if (!authEnabled) {
@@ -147,7 +143,6 @@ export const createAuthMiddleware = ({
       return;
     }
 
-    // Verify user still exists and is active
     try {
       const user = await prisma.user.findUnique({
         where: { id: payload.userId },
@@ -179,7 +174,6 @@ export const createAuthMiddleware = ({
         return;
       }
 
-      // Attach user to request
       req.user = {
         id: user.id,
         username: user.username,
@@ -253,7 +247,6 @@ export const createAuthMiddleware = ({
         };
       }
     } catch (error) {
-      // Silently fail for optional auth
       console.error("Error in optional auth:", error);
     }
 

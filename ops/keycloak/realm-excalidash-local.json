@@ -48,8 +48,8 @@
       "emailVerified": true,
       "firstName": "Alice",
       "lastName": "Example",
-      "email": "alice@example.com"
-      "requiredActions": []
+      "email": "alice@example.com",
+      "requiredActions": ["UPDATE_PASSWORD"]
     },
     {
       "username": "bob",
@@ -57,8 +57,8 @@
       "emailVerified": true,
       "firstName": "Bob",
       "lastName": "Example",
-      "email": "bob@example.com"
-      "requiredActions": []
+      "email": "bob@example.com",
+      "requiredActions": ["UPDATE_PASSWORD"]
     }
   ]
 }

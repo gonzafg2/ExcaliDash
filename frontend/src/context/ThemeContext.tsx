@@ -19,7 +19,6 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     console.log('Theme changed to:', theme);
     localStorage.setItem('theme', theme);
     
-    // Update favicon
     const link = document.querySelector("link[rel~='icon']") as HTMLLinkElement;
     if (link) {
       link.href = theme === 'dark' ? '/favicon-dark.svg' : '/favicon-light.svg';
