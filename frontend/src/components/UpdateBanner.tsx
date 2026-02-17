@@ -27,7 +27,6 @@ const safeSetItem = (key: string, value: string): void => {
     if (!storage || typeof storage.setItem !== "function") return;
     storage.setItem(key, value);
   } catch {
-    // ignore
   }
 };
 
@@ -49,7 +48,6 @@ const safeSetSessionItem = (key: string, value: string): void => {
     if (!storage || typeof storage.setItem !== "function") return;
     storage.setItem(key, value);
   } catch {
-    // ignore
   }
 };
 
@@ -111,7 +109,6 @@ export const UpdateBanner: React.FC = () => {
       writeCachedInfo(channel, data);
       markCheckedNow(channel);
     } catch {
-      // Non-blocking: silently skip and retry later.
       markCheckedNow(channel);
     } finally {
       setLoading(false);
@@ -119,7 +116,6 @@ export const UpdateBanner: React.FC = () => {
   };
 
   useEffect(() => {
-    // Always hydrate from cache first so the banner persists across refreshes.
     setInfo(readCachedInfo(channel));
     setClosedVersion(safeGetSessionItem(closedVersionStorageKey(channel)));
     void load(false);

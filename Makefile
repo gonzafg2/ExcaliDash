@@ -1,6 +1,3 @@
-# ExcaliDash Makefile
-# Comprehensive development, testing, and release automation
-
 .PHONY: help install dev build test test-frontend test-backend test-e2e test-e2e-docker \
         lint lint-frontend lint-backend clean docker-build docker-run docker-down docker-logs \
         release pre-release version-bump changelog changelog-open changelog-keep db-migrate db-reset
@@ -131,17 +128,17 @@ clean-all: clean ## Clean everything including node_modules
 #===============================================================================
 
 test: test-frontend test-backend ## Run all tests (frontend + backend unit tests)
-	@echo "$(GREEN)All unit tests passed!$(NC)"
+	@echo "All unit tests passed."
 
 test-all: test test-e2e ## Run ALL tests (unit + e2e)
-	@echo "$(GREEN)All tests passed!$(NC)"
+	@echo "All tests passed."
 
 test-frontend: ## Run frontend unit tests
-	@echo "$(YELLOW)Running frontend tests...$(NC)"
+	@echo "Running frontend tests..."
 	cd frontend && npm test
 
 test-backend: ## Run backend unit tests
-	@echo "$(YELLOW)Running backend tests...$(NC)"
+	@echo "Running backend tests..."
 	cd backend && npm test
 
 test-coverage: ## Run all unit tests with coverage
@@ -243,7 +240,7 @@ version-bump: ## Interactive version bump
 #===============================================================================
 
 changelog: ## Reset RELEASE.md from template and open it for editing
-	@echo "$(YELLOW)Generating fresh RELEASE.md...$(NC)"
+	@echo "Generating fresh RELEASE.md..."
 	@if [ "$(PRERELEASE)" = "1" ]; then \
 		node scripts/reset-release-notes.cjs --prerelease; \
 	else \
@@ -252,21 +249,21 @@ changelog: ## Reset RELEASE.md from template and open it for editing
 	@$(MAKE) changelog-open
 
 changelog-open: ## Open current RELEASE.md without resetting
-	@echo "$(YELLOW)Opening RELEASE.md for editing...$(NC)"
+	@echo "Opening RELEASE.md for editing..."
 	@if [ -n "$$EDITOR" ]; then \
 		$$EDITOR RELEASE.md; \
 	elif command -v code >/dev/null 2>&1; then \
 		code --wait RELEASE.md; \
 	elif command -v open >/dev/null 2>&1; then \
 		open RELEASE.md; \
-		echo "$(YELLOW)Edit RELEASE.md in your GUI editor, then press Enter to continue...$(NC)"; \
+		echo "Edit RELEASE.md in your GUI editor, then press Enter to continue..."; \
 		read _; \
 	elif command -v xdg-open >/dev/null 2>&1; then \
 		xdg-open RELEASE.md; \
-		echo "$(YELLOW)Edit RELEASE.md in your GUI editor, then press Enter to continue...$(NC)"; \
+		echo "Edit RELEASE.md in your GUI editor, then press Enter to continue..."; \
 		read _; \
 	else \
-		echo "$(RED)No GUI opener found. Falling back to vi.$(NC)"; \
+		echo "No GUI opener found. Falling back to vi."; \
 		vi RELEASE.md; \
 	fi
 
@@ -274,45 +271,41 @@ changelog-keep: ## Alias: open current RELEASE.md without resetting
 	@$(MAKE) changelog-open
 
 release: ## Full release workflow (main branch only)
-	@echo "$(GREEN)===========================================$(NC)"
-	@echo "$(GREEN)     ExcaliDash Release Workflow$(NC)"
-	@echo "$(GREEN)===========================================$(NC)"
-	@echo ""
 	@# Branch check
 	@CURRENT_BRANCH=$$(git rev-parse --abbrev-ref HEAD); \
 	if [ "$$CURRENT_BRANCH" != "main" ]; then \
-		echo "$(RED)ERROR: Releases must be made from 'main' branch!$(NC)"; \
-		echo "$(RED)Current branch: $$CURRENT_BRANCH$(NC)"; \
-		echo "$(YELLOW)Please switch to main and try again.$(NC)"; \
+		echo "ERROR: Releases must be made from 'main' branch!"; \
+		echo "Current branch: $$CURRENT_BRANCH"; \
+		echo "Please switch to main and try again."; \
 		exit 1; \
 	fi
-	@echo "$(GREEN)✓ On main branch$(NC)"
+	@echo "On main branch."
 	@echo ""
 	@# Pull latest
-	@echo "$(YELLOW)Pulling latest changes...$(NC)"
+	@echo "Pulling latest changes..."
 	@git pull origin main
-	@echo "$(GREEN)✓ Up to date with remote$(NC)"
+	@echo "Up to date with remote."
 	@echo ""
 	@# Show current status
-	@echo "$(YELLOW)Current status:$(NC)"
+	@echo "Current status:"
 	@git status --short || true
 	@echo ""
 	@# Run tests
-	@echo "$(YELLOW)Running tests...$(NC)"
+	@echo "Running tests..."
 	@$(MAKE) test
-	@echo "$(GREEN)✓ All tests passed$(NC)"
+	@echo "All tests passed."
 	@echo ""
 	@# Version bump - inline with clear options
 	@CURRENT=$$(cat VERSION); \
 	PATCH=$$(echo $$CURRENT | awk -F. '{print $$1"."$$2"."$$3+1}'); \
 	MINOR=$$(echo $$CURRENT | awk -F. '{print $$1"."$$2+1".0"}'); \
 	MAJOR=$$(echo $$CURRENT | awk -F. '{print $$1+1".0.0"}'); \
-	echo "$(YELLOW)Current version: $$CURRENT$(NC)"; \
+	echo "Current version: $$CURRENT"; \
 	echo ""; \
-	echo "$(BLUE)Select version bump:$(NC)"; \
-	echo "  1) patch  → $$PATCH"; \
-	echo "  2) minor  → $$MINOR"; \
-	echo "  3) major  → $$MAJOR"; \
+	echo "Select version bump:"; \
+	echo "  1) patch -> $$PATCH"; \
+	echo "  2) minor -> $$MINOR"; \
+	echo "  3) major -> $$MAJOR"; \
 	echo "  4) custom"; \
 	echo "  5) skip (keep $$CURRENT)"; \
 	echo ""; \
@@ -323,130 +316,121 @@ release: ## Full release workflow (main branch only)
 		3) NEW_VERSION=$$MAJOR ;; \
 		4) read -p "Enter new version: " NEW_VERSION ;; \
 		5) NEW_VERSION=$$CURRENT ;; \
-		*) echo "$(RED)Invalid choice, using current$(NC)"; NEW_VERSION=$$CURRENT ;; \
+		*) echo "Invalid choice, using current."; NEW_VERSION=$$CURRENT ;; \
 	esac; \
 	if [ "$$NEW_VERSION" != "$$CURRENT" ]; then \
-		echo "$(YELLOW)Bumping version to $$NEW_VERSION...$(NC)"; \
+		echo "Bumping version to $$NEW_VERSION..."; \
 		echo "$$NEW_VERSION" > VERSION; \
 		sed -i '' "s/\"version\": \".*\"/\"version\": \"$$NEW_VERSION\"/" frontend/package.json 2>/dev/null || \
 			sed -i "s/\"version\": \".*\"/\"version\": \"$$NEW_VERSION\"/" frontend/package.json; \
 		sed -i '' "s/\"version\": \".*\"/\"version\": \"$$NEW_VERSION\"/" backend/package.json 2>/dev/null || \
 			sed -i "s/\"version\": \".*\"/\"version\": \"$$NEW_VERSION\"/" backend/package.json; \
-		echo "$(GREEN)✓ Version bumped to $$NEW_VERSION$(NC)"; \
+		echo "Version bumped to $$NEW_VERSION."; \
 	else \
-		echo "$(YELLOW)Keeping version $$CURRENT$(NC)"; \
+		echo "Keeping version $$CURRENT."; \
 	fi
 	@echo ""
 	@# Release notes
-	@echo "$(YELLOW)Preparing fresh release notes (RELEASE.md)...$(NC)"
+	@echo "Preparing fresh release notes (RELEASE.md)..."
 	@$(MAKE) changelog
 	@echo ""
 	@# Show summary before commit
 	@NEW_VERSION=$$(cat VERSION); \
-	echo "$(BLUE)===========================================$(NC)"; \
-	echo "$(BLUE)Release Summary$(NC)"; \
-	echo "$(BLUE)===========================================$(NC)"; \
-	echo "  Version:  v$$NEW_VERSION"; \
-	echo "  Branch:   main"; \
-	echo "  Tag:      v$$NEW_VERSION"; \
+	echo "Release summary:"; \
+	echo "  Version: v$$NEW_VERSION"; \
+	echo "  Branch: main"; \
+	echo "  Tag: v$$NEW_VERSION"; \
 	echo ""; \
-	echo "$(YELLOW)Changes to be committed:$(NC)"; \
+	echo "Changes to be committed:"; \
 	git status --short; \
 	echo ""
-	@read -p "$(YELLOW)Proceed with release? [y/N]: $(NC)" confirm; \
+	@read -p "Proceed with release? [y/N]: " confirm; \
 	if [ "$$confirm" != "y" ] && [ "$$confirm" != "Y" ]; then \
-		echo "$(RED)Release aborted.$(NC)"; \
+		echo "Release aborted."; \
 		exit 1; \
 	fi
 	@echo ""
 	@# Commit changes
 	@NEW_VERSION=$$(cat VERSION); \
-	echo "$(YELLOW)Committing release...$(NC)"; \
+	echo "Committing release..."; \
 	git add -A; \
-	git commit -m "chore: release v$$NEW_VERSION" || echo "$(YELLOW)Nothing to commit$(NC)"
-	@echo "$(GREEN)✓ Changes committed$(NC)"
+	git commit -m "chore: release v$$NEW_VERSION" || echo "Nothing to commit."
+	@echo "Changes committed."
 	@echo ""
 	@# Push to remote
-	@echo "$(YELLOW)Pushing to remote...$(NC)"
+	@echo "Pushing to remote..."
 	@git push origin main
-	@echo "$(GREEN)✓ Pushed to origin/main$(NC)"
+	@echo "Pushed to origin/main."
 	@echo ""
 	@# Create git tag
 	@NEW_VERSION=$$(cat VERSION); \
-	echo "$(YELLOW)Creating tag v$$NEW_VERSION...$(NC)"; \
+	echo "Creating tag v$$NEW_VERSION..."; \
 	git tag -a "v$$NEW_VERSION" -m "Release v$$NEW_VERSION"; \
 	git push origin "v$$NEW_VERSION"
-	@echo "$(GREEN)✓ Tag v$$NEW_VERSION created and pushed$(NC)"
+	@echo "Tag v$$NEW_VERSION created and pushed."
 	@echo ""
 	@# Create GitHub release
 	@NEW_VERSION=$$(cat VERSION); \
-	echo "$(YELLOW)Creating GitHub release...$(NC)"; \
+	echo "Creating GitHub release..."; \
 	if command -v gh &> /dev/null; then \
 		gh release create "v$$NEW_VERSION" \
 			--title "ExcaliDash v$$NEW_VERSION" \
 			--notes-file RELEASE.md; \
-		echo "$(GREEN)✓ GitHub release created$(NC)"; \
+		echo "GitHub release created."; \
 	else \
-		echo "$(RED)gh CLI not installed!$(NC)"; \
-		echo "$(YELLOW)Install with: brew install gh$(NC)"; \
-		echo "$(YELLOW)Then run: gh auth login$(NC)"; \
+		echo "gh CLI not installed!"; \
+		echo "Install with: brew install gh"; \
+		echo "Then run: gh auth login"; \
 		exit 1; \
 	fi
 	@echo ""
 	@# Build and push Docker images
-	@echo "$(YELLOW)Building and pushing Docker images...$(NC)"
+	@echo "Building and pushing Docker images..."
 	@./scripts/publish-docker.sh
 	@echo ""
-	@echo "$(GREEN)===========================================$(NC)"
-	@echo "$(GREEN)     Release Complete!$(NC)"
-	@echo "$(GREEN)===========================================$(NC)"
 	@NEW_VERSION=$$(cat VERSION); \
-	echo ""; \
-	echo "$(GREEN)✓ Version: v$$NEW_VERSION$(NC)"; \
-	echo "$(GREEN)✓ Git tag pushed$(NC)"; \
-	echo "$(GREEN)✓ GitHub release created$(NC)"; \
-	echo "$(GREEN)✓ Docker images published$(NC)"
+	echo "Release complete."; \
+	echo "Version: v$$NEW_VERSION"; \
+	echo "Git tag pushed."; \
+	echo "GitHub release created."; \
+	echo "Docker images published."
 
 pre-release: ## Pre-release workflow (pre-release branch only)
-	@echo "$(BLUE)===========================================$(NC)"
-	@echo "$(BLUE)   ExcaliDash Pre-Release Workflow$(NC)"
-	@echo "$(BLUE)===========================================$(NC)"
-	@echo ""
 	@# Branch check
 	@CURRENT_BRANCH=$$(git rev-parse --abbrev-ref HEAD); \
 	if [ "$$CURRENT_BRANCH" != "pre-release" ]; then \
-		echo "$(RED)ERROR: Pre-releases must be made from 'pre-release' branch!$(NC)"; \
-		echo "$(RED)Current branch: $$CURRENT_BRANCH$(NC)"; \
-		echo "$(YELLOW)Please switch to pre-release and try again.$(NC)"; \
+		echo "ERROR: Pre-releases must be made from 'pre-release' branch!"; \
+		echo "Current branch: $$CURRENT_BRANCH"; \
+		echo "Please switch to pre-release and try again."; \
 		exit 1; \
 	fi
-	@echo "$(GREEN)✓ On pre-release branch$(NC)"
+	@echo "On pre-release branch."
 	@echo ""
 	@# Pull latest
-	@echo "$(YELLOW)Pulling latest changes...$(NC)"
+	@echo "Pulling latest changes..."
 	@git pull origin pre-release
-	@echo "$(GREEN)✓ Up to date with remote$(NC)"
+	@echo "Up to date with remote."
 	@echo ""
 	@# Show current status
-	@echo "$(YELLOW)Current status:$(NC)"
+	@echo "Current status:"
 	@git status --short || true
 	@echo ""
 	@# Run tests
-	@echo "$(YELLOW)Running tests...$(NC)"
+	@echo "Running tests..."
 	@$(MAKE) test
-	@echo "$(GREEN)✓ All tests passed$(NC)"
+	@echo "All tests passed."
 	@echo ""
 	@# Version bump - inline with clear options
 	@CURRENT=$$(cat VERSION); \
 	PATCH=$$(echo $$CURRENT | awk -F. '{print $$1"."$$2"."$$3+1}'); \
 	MINOR=$$(echo $$CURRENT | awk -F. '{print $$1"."$$2+1".0"}'); \
 	MAJOR=$$(echo $$CURRENT | awk -F. '{print $$1+1".0.0"}'); \
-	echo "$(YELLOW)Current version: $$CURRENT$(NC)"; \
+	echo "Current version: $$CURRENT"; \
 	echo ""; \
-	echo "$(BLUE)Select version bump:$(NC)"; \
-	echo "  1) patch  → $$PATCH-dev"; \
-	echo "  2) minor  → $$MINOR-dev"; \
-	echo "  3) major  → $$MAJOR-dev"; \
+	echo "Select version bump:"; \
+	echo "  1) patch -> $$PATCH-dev"; \
+	echo "  2) minor -> $$MINOR-dev"; \
+	echo "  3) major -> $$MAJOR-dev"; \
 	echo "  4) custom"; \
 	echo "  5) skip (keep $$CURRENT-dev)"; \
 	echo ""; \
@@ -457,92 +441,87 @@ pre-release: ## Pre-release workflow (pre-release branch only)
 		3) NEW_VERSION=$$MAJOR ;; \
 		4) read -p "Enter new version (without -dev suffix): " NEW_VERSION ;; \
 		5) NEW_VERSION=$$CURRENT ;; \
-		*) echo "$(RED)Invalid choice, using current$(NC)"; NEW_VERSION=$$CURRENT ;; \
+		*) echo "Invalid choice, using current."; NEW_VERSION=$$CURRENT ;; \
 	esac; \
 	if [ "$$NEW_VERSION" != "$$CURRENT" ]; then \
-		echo "$(YELLOW)Bumping version to $$NEW_VERSION...$(NC)"; \
+		echo "Bumping version to $$NEW_VERSION..."; \
 		echo "$$NEW_VERSION" > VERSION; \
 		sed -i '' "s/\"version\": \".*\"/\"version\": \"$$NEW_VERSION\"/" frontend/package.json 2>/dev/null || \
 			sed -i "s/\"version\": \".*\"/\"version\": \"$$NEW_VERSION\"/" frontend/package.json; \
 		sed -i '' "s/\"version\": \".*\"/\"version\": \"$$NEW_VERSION\"/" backend/package.json 2>/dev/null || \
 			sed -i "s/\"version\": \".*\"/\"version\": \"$$NEW_VERSION\"/" backend/package.json; \
-		echo "$(GREEN)✓ Version bumped to $$NEW_VERSION$(NC)"; \
+		echo "Version bumped to $$NEW_VERSION."; \
 	else \
-		echo "$(YELLOW)Keeping version $$CURRENT$(NC)"; \
+		echo "Keeping version $$CURRENT."; \
 	fi
 	@echo ""
 	@# Release notes
-	@echo "$(YELLOW)Preparing fresh pre-release notes (RELEASE.md)...$(NC)"
+	@echo "Preparing fresh pre-release notes (RELEASE.md)..."
 	@$(MAKE) changelog PRERELEASE=1
 	@echo ""
 	@# Show summary before commit
 	@NEW_VERSION=$$(cat VERSION); \
-	echo "$(BLUE)===========================================$(NC)"; \
-	echo "$(BLUE)Pre-Release Summary$(NC)"; \
-	echo "$(BLUE)===========================================$(NC)"; \
-	echo "  Version:  v$$NEW_VERSION-dev"; \
-	echo "  Branch:   pre-release"; \
-	echo "  Tag:      v$$NEW_VERSION-dev (pre-release)"; \
+	echo "Pre-release summary:"; \
+	echo "  Version: v$$NEW_VERSION-dev"; \
+	echo "  Branch: pre-release"; \
+	echo "  Tag: v$$NEW_VERSION-dev (pre-release)"; \
 	echo ""; \
-	echo "$(YELLOW)Changes to be committed:$(NC)"; \
+	echo "Changes to be committed:"; \
 	git status --short; \
 	echo ""
-	@read -p "$(YELLOW)Proceed with pre-release? [y/N]: $(NC)" confirm; \
+	@read -p "Proceed with pre-release? [y/N]: " confirm; \
 	if [ "$$confirm" != "y" ] && [ "$$confirm" != "Y" ]; then \
-		echo "$(RED)Pre-release aborted.$(NC)"; \
+		echo "Pre-release aborted."; \
 		exit 1; \
 	fi
 	@echo ""
 	@# Commit changes
 	@NEW_VERSION=$$(cat VERSION); \
-	echo "$(YELLOW)Committing pre-release...$(NC)"; \
+	echo "Committing pre-release..."; \
 	git add -A; \
-	git commit -m "chore: pre-release v$$NEW_VERSION-dev" || echo "$(YELLOW)Nothing to commit$(NC)"
-	@echo "$(GREEN)✓ Changes committed$(NC)"
+	git commit -m "chore: pre-release v$$NEW_VERSION-dev" || echo "Nothing to commit."
+	@echo "Changes committed."
 	@echo ""
 	@# Push to remote
-	@echo "$(YELLOW)Pushing to remote...$(NC)"
+	@echo "Pushing to remote..."
 	@git push origin pre-release
-	@echo "$(GREEN)✓ Pushed to origin/pre-release$(NC)"
+	@echo "Pushed to origin/pre-release."
 	@echo ""
 	@# Create git tag
 	@NEW_VERSION=$$(cat VERSION); \
 	PRE_TAG="v$$NEW_VERSION-dev"; \
-	echo "$(YELLOW)Creating tag $$PRE_TAG...$(NC)"; \
+	echo "Creating tag $$PRE_TAG..."; \
 	git tag -a "$$PRE_TAG" -m "Pre-release $$PRE_TAG"; \
 	git push origin "$$PRE_TAG"
-	@echo "$(GREEN)✓ Tag $$PRE_TAG created and pushed$(NC)"
+	@echo "Tag $$PRE_TAG created and pushed."
 	@echo ""
 	@# Create GitHub pre-release
 	@NEW_VERSION=$$(cat VERSION); \
 	PRE_TAG="v$$NEW_VERSION-dev"; \
-	echo "$(YELLOW)Creating GitHub pre-release...$(NC)"; \
+	echo "Creating GitHub pre-release..."; \
 	if command -v gh &> /dev/null; then \
 		gh release create "$$PRE_TAG" \
 			--title "ExcaliDash $$PRE_TAG (Pre-release)" \
 			--notes-file RELEASE.md \
 			--prerelease; \
-		echo "$(GREEN)✓ GitHub pre-release created$(NC)"; \
+		echo "GitHub pre-release created."; \
 	else \
-		echo "$(RED)gh CLI not installed!$(NC)"; \
-		echo "$(YELLOW)Install with: brew install gh$(NC)"; \
-		echo "$(YELLOW)Then run: gh auth login$(NC)"; \
+		echo "gh CLI not installed!"; \
+		echo "Install with: brew install gh"; \
+		echo "Then run: gh auth login"; \
 		exit 1; \
 	fi
 	@echo ""
 	@# Build and push Docker images
-	@echo "$(YELLOW)Building and pushing Docker images...$(NC)"
+	@echo "Building and pushing Docker images..."
 	@./scripts/publish-docker-prerelease.sh
 	@echo ""
-	@echo "$(BLUE)===========================================$(NC)"
-	@echo "$(GREEN)     Pre-Release Complete!$(NC)"
-	@echo "$(BLUE)===========================================$(NC)"
 	@NEW_VERSION=$$(cat VERSION); \
-	echo ""; \
-	echo "$(GREEN)✓ Version: v$$NEW_VERSION-dev$(NC)"; \
-	echo "$(GREEN)✓ Git tag pushed$(NC)"; \
-	echo "$(GREEN)✓ GitHub pre-release created$(NC)"; \
-	echo "$(GREEN)✓ Docker images published$(NC)"
+	echo "Pre-release complete."; \
+	echo "Version: v$$NEW_VERSION-dev"; \
+	echo "Git tag pushed."; \
+	echo "GitHub pre-release created."; \
+	echo "Docker images published."
 
 release-docker: ## Build and push release Docker images
 	./scripts/publish-docker.sh

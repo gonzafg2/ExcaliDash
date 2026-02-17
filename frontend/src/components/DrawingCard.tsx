@@ -238,7 +238,6 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
           isSelected ? "border-neutral-500 dark:border-neutral-500 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)]" : "border-black dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)]"
         )}
       >
-        {/* Selection Toggle */}
         <div className="absolute top-2 right-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-200" style={{ opacity: isSelected ? 1 : undefined }}>
           <button
             onClick={(e) => { e.stopPropagation(); onToggleSelection(e); }}
@@ -254,7 +253,6 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
           </button>
         </div>
 
-        {/* Preview Area */}
         <div
           onClick={(e) => !isTrash && onClick(drawing.id, e)}
           className={clsx(
@@ -263,7 +261,6 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
             isTrash && "cursor-default"
           )}
         >
-          {/* Placeholder Grid Pattern */}
           <div className="absolute inset-0 opacity-[0.3] bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] [background-size:24px_24px]"></div>
 
           {previewSvg ? (
@@ -281,7 +278,6 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
           )}
         </div>
 
-        {/* Footer */}
         <div className="p-3 sm:p-4 lg:p-5 bg-white dark:bg-neutral-900 rounded-b-2xl relative z-10">
           {isRenaming ? (
             <form
@@ -367,7 +363,6 @@ export const DrawingCard: React.FC<DrawingCardProps> = ({
         </div>
       </div>
 
-      {/* Context Menu Portal */}
       {contextMenu && (
         <ContextMenuPortal>
           <div

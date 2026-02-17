@@ -58,7 +58,6 @@ export const pickLatestRelease = (
     .filter((r) => r && !r.draft)
     .filter((r) => {
       if (channel === "prerelease") return true;
-      // stable channel: ignore prereleases and tags with semver prerelease suffix.
       if (r.prerelease) return false;
       const tag = typeof r.tag_name === "string" ? r.tag_name : "";
       const parsed = parseSemver(tag);
@@ -140,7 +139,6 @@ export const fetchLatest = async (
       isUpdateAvailable: null,
       error: `GitHub API error: HTTP ${resp.status}`,
     };
-    // Cache failures briefly to avoid hammering on each request.
     cache = { channel, fetchedAt: now, etag: null, response };
     return response;
   }

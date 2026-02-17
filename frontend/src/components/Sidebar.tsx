@@ -328,36 +328,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span className="min-w-0 flex-1 text-left">Settings</span>
           </button>
 
-          {/* User info and logout */}
           {authEnabled && (
             <div className="mt-auto pt-4 border-t-2 border-slate-200 dark:border-neutral-700">
-            {user && (
-              <div className="py-2 text-xs text-slate-500 dark:text-neutral-500 mb-2">
-                <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3">
-                  <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-indigo-600 text-white font-bold flex items-center justify-center">
-                    {getInitialsFromName(user.name)}
+              {user && (
+                <div className="py-2 text-xs text-slate-500 dark:text-neutral-500 mb-2">
+                  <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3">
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-indigo-600 text-white font-bold flex items-center justify-center">
+                      {getInitialsFromName(user.name)}
+                    </div>
+                    <div className="min-w-0 text-left">
+                      <div className="font-semibold text-slate-700 dark:text-neutral-300 truncate leading-tight">{user.name}</div>
+                      <div className="truncate leading-tight">{user.email}</div>
+                    </div>
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 invisible" aria-hidden="true" />
                   </div>
-                  <div className="min-w-0 text-left">
-                    <div className="font-semibold text-slate-700 dark:text-neutral-300 truncate leading-tight">{user.name}</div>
-                    <div className="truncate leading-tight">{user.email}</div>
-                  </div>
-                  <div className="w-7 h-7 sm:w-8 sm:h-8 invisible" aria-hidden="true" />
                 </div>
-              </div>
-            )}
-            <button
-              onClick={logout}
-              className="w-full flex items-center gap-3 px-3 py-2 text-sm font-bold rounded-xl transition-all duration-200 border-2 border-rose-300 dark:border-rose-700 bg-white dark:bg-neutral-900 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/30 hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-0.5 cursor-pointer"
-            >
-              <LogOut size={18} />
-              <span className="min-w-0 flex-1 text-left">Logout</span>
-            </button>
+              )}
+              <button
+                onClick={logout}
+                className="w-full flex items-center gap-3 px-3 py-2 text-sm font-bold rounded-xl transition-all duration-200 border-2 border-rose-300 dark:border-rose-700 bg-white dark:bg-neutral-900 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/30 hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:hover:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.2)] hover:-translate-y-0.5 cursor-pointer"
+              >
+                <LogOut size={18} />
+                <span className="min-w-0 flex-1 text-left">Logout</span>
+              </button>
             </div>
           )}
         </div>
       </div>
 
-      {/* Context Menu */}
       {contextMenu && (
         <div
           className="fixed inset-0 z-50"

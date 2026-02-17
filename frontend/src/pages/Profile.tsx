@@ -226,7 +226,6 @@ export const Profile: React.FC = () => {
                 Profile
             </h1>
 
-            {/* Success/Error Messages */}
             {success && (
                 <div className="mb-6 p-4 bg-green-50 dark:bg-green-900/20 border-2 border-green-200 dark:border-green-800 rounded-xl">
                     <p className="text-green-800 dark:text-green-200 font-medium">{success}</p>
@@ -239,7 +238,6 @@ export const Profile: React.FC = () => {
             )}
 
             <div className="space-y-6">
-                {/* Personal Information Section */}
                 <div className="bg-white dark:bg-neutral-900 border-2 border-black dark:border-neutral-700 rounded-2xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] p-6">
                     <div className="flex items-center gap-3 mb-6">
                         <div className="w-12 h-12 bg-indigo-50 dark:bg-neutral-800 rounded-xl flex items-center justify-center border-2 border-indigo-100 dark:border-neutral-700">
@@ -364,7 +362,6 @@ export const Profile: React.FC = () => {
                     </div>
                 </div>
 
-                {/* Password Change Section */}
                 <div className="bg-white dark:bg-neutral-900 border-2 border-black dark:border-neutral-700 rounded-2xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] p-6">
                     <div className="flex items-center justify-between mb-6">
                         <div className="flex items-center gap-3">

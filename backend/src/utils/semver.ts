@@ -29,7 +29,6 @@ export const parseSemver = (input: string): ParsedSemver | null => {
 
 const isNumericIdentifier = (id: string): boolean => /^[0-9]+$/.test(id);
 
-// Returns -1 if a < b, 0 if a == b, 1 if a > b (semver precedence).
 export const compareSemver = (a: ParsedSemver, b: ParsedSemver): number => {
   if (a.major !== b.major) return a.major < b.major ? -1 : 1;
   if (a.minor !== b.minor) return a.minor < b.minor ? -1 : 1;
@@ -38,7 +37,6 @@ export const compareSemver = (a: ParsedSemver, b: ParsedSemver): number => {
   const aPre = a.prerelease;
   const bPre = b.prerelease;
 
-  // No prerelease has higher precedence than any prerelease.
   if (aPre.length === 0 && bPre.length === 0) return 0;
   if (aPre.length === 0) return 1;
   if (bPre.length === 0) return -1;
@@ -61,7 +59,6 @@ export const compareSemver = (a: ParsedSemver, b: ParsedSemver): number => {
       continue;
     }
 
-    // Numeric identifiers have lower precedence than non-numeric identifiers.
     if (aNum && !bNum) return -1;
     if (!aNum && bNum) return 1;
 
@@ -77,4 +74,3 @@ export const isSemverGreater = (aRaw: string, bRaw: string): boolean | null => {
   if (!a || !b) return null;
   return compareSemver(a, b) > 0;
 };
-

@@ -101,7 +101,6 @@ if (deploy.ok) {
   const stderr = deploy.stderr || "";
   const isP3005 = stderr.includes("P3005");
 
-  // Common when an older dev.db exists but migrations weren't used previously.
   if (isNonProd && isFileDb && isP3005) {
     const backupPath = backupDbIfPresent();
     console.warn(

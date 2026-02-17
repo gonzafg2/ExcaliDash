@@ -1181,7 +1181,6 @@ export const Editor: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Auto-hide Toggle */}
           <button
             onClick={() => {
               setAutoHideEnabled(!autoHideEnabled);
@@ -1197,7 +1196,6 @@ export const Editor: React.FC = () => {
 
           <div className="h-6 w-px bg-gray-300 dark:bg-gray-700" />
 
-          {/* Download Button */}
           <button
             onClick={() => {
               if (excalidrawAPI.current) {

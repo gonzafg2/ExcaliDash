@@ -3,7 +3,6 @@
 @tailwind utilities;
 
 html.dark body {
-  /* Debug: If this turns red/dark, the class is present */
   background-color: #0a0a0a !important;
 }
 

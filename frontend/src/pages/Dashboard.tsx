@@ -993,7 +993,6 @@ export const Dashboard: React.FC = () => {
           </div>
         )}
 
-        {/* Infinite Scroll Trigger */}
         <div ref={loaderRef} className="py-8 flex justify-center items-center h-20">
           {isFetchingMore && (
             <div className="flex items-center gap-2 text-indigo-600 font-bold animate-in fade-in slide-in-from-bottom-2">

@@ -188,7 +188,6 @@ export const Layout: React.FC<LayoutProps> = ({
               onDrop={onDrop}
             />
             
-            {/* Resize Handle */}
             <div
               className={`absolute top-0 right-0 w-1.5 h-full cursor-col-resize bg-transparent hover:bg-indigo-400 dark:hover:bg-indigo-500 transition-all duration-150 ${isResizing ? 'bg-indigo-500 dark:bg-indigo-400 w-2' : ''} group`}
               onMouseDown={handleMouseDown}

@@ -21,14 +21,12 @@ export const Logo: React.FC<{ className?: string }> = ({ className }) => {
           </feMerge>
         </filter>
       </defs>
-      {/* Group: The Dashboard Grid (2x2) */}
       <g
         strokeWidth="32"
         strokeLinecap="round"
         strokeLinejoin="round"
         className="stroke-[#2D3748] dark:stroke-[#E2E8F0]"
       >
-        {/* Top Left: Bar Chart */}
         <rect
           x="40"
           y="40"
@@ -50,7 +48,6 @@ export const Logo: React.FC<{ className?: string }> = ({ className }) => {
           d="M180 180 V 160"
           className="stroke-[#38B2AC] dark:stroke-[#2DD4BF]"
         ></path>
-        {/* Top Right: Pie Chart */}
         <rect
           x="272"
           y="40"
@@ -67,13 +64,11 @@ export const Logo: React.FC<{ className?: string }> = ({ className }) => {
           strokeWidth="24"
           className="stroke-[#DD6B20] dark:stroke-[#FB923C]"
         ></circle>
-        {/* Slice */}
         <path
           d="M372 140 L 405 105"
           strokeWidth="12"
           className="stroke-[#DD6B20] dark:stroke-[#FB923C]"
         ></path>
-        {/* Bottom Left: List/Text */}
         <rect
           x="40"
           y="272"
@@ -104,8 +99,6 @@ export const Logo: React.FC<{ className?: string }> = ({ className }) => {
           y2="412"
           className="stroke-[#805AD5] dark:stroke-[#A78BFA]"
         ></line>
-        {/* Bottom Right: The "Creation" Zone */}
-        {/* Dashed placeholder for the item being created */}
         <rect
           x="272"
           y="272"
@@ -118,23 +111,19 @@ export const Logo: React.FC<{ className?: string }> = ({ className }) => {
           className="stroke-[#E53E3E] dark:stroke-[#F87171]"
         ></rect>
       </g>
-      {/* The Pencil (Floating over the bottom right) */}
       <g transform="translate(380, 380) rotate(-45)" filter="url(#softShadow)">
-        {/* Body */}
         <path
           d="M-25 -100 L-25 80 L0 120 L25 80 L25 -100 Z"
           strokeWidth="24"
           strokeLinejoin="round"
           className="fill-[#F6E05E] dark:fill-[#FACC15] stroke-[#2D3748] dark:stroke-[#E2E8F0]"
         ></path>
-        {/* Eraser */}
         <path
           d="M-25 -100 L-25 -130 C-25 -150, 25 -150, 25 -130 L25 -100 Z"
           strokeWidth="24"
           strokeLinejoin="round"
           className="fill-[#F687B3] dark:fill-[#F472B6] stroke-[#2D3748] dark:stroke-[#E2E8F0]"
         ></path>
-        {/* Collar */}
         <rect
           x="-25"
           y="-100"
@@ -144,7 +133,6 @@ export const Logo: React.FC<{ className?: string }> = ({ className }) => {
           strokeLinejoin="round"
           className="fill-[#CBD5E0] dark:fill-[#475569] stroke-[#2D3748] dark:stroke-[#E2E8F0]"
         ></rect>
-        {/* Tip Lead */}
         <path
           d="M-8 108 L0 120 L8 108 Z"
           className="fill-[#2D3748] dark:fill-[#E2E8F0]"

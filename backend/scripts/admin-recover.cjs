@@ -41,7 +41,6 @@ const parseArgs = (argv) => {
 };
 
 const generatePassword = () => {
-  // 24 chars base64url-ish
   const buf = require("crypto").randomBytes(18);
   return buf.toString("base64").replace(/[+/=]/g, "").slice(0, 24);
 };

@@ -47,20 +47,17 @@ function getCurrentVersion() {
     if (fs.existsSync(VERSION_FILE)) {
       return fs.readFileSync(VERSION_FILE, 'utf8').trim();
     }
-  } catch (error) {
-    // Continue to default version
+    } catch (error) {
   }
   return '0.1.0'; // Default version if VERSION file doesn't exist
 }
 
 function setVersion(newVersion) {
-  // Validate version format (semantic versioning)
   if (!/^\d+\.\d+\.\d+$/.test(newVersion)) {
     log(`Error: Version must be in format X.Y.Z (e.g., 1.2.3)`, 'red');
     process.exit(1);
   }
 
-  // Update VERSION file
   try {
     fs.writeFileSync(VERSION_FILE, newVersion);
     log(`✓ Updated VERSION file to ${newVersion}`, 'green');
@@ -69,7 +66,6 @@ function setVersion(newVersion) {
     process.exit(1);
   }
 
-  // Update package.json files
   syncVersionToPackages(newVersion);
 }
 
@@ -123,7 +119,6 @@ function syncVersionToPackages(version) {
   updatePackageJson(FRONTEND_PACKAGE, version);
 }
 
-// Main command handling
 const args = process.argv.slice(2);
 const command = args[0];
 const arg = args[1];

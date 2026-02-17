@@ -72,7 +72,7 @@ export const importDrawings = async (
     drawingFiles.map(async (file, drawingIndex) => {
       const fileIndex = originalIndexMap.get(drawingIndex) ?? drawingIndex;
       try {
-        if (onProgress) onProgress(fileIndex, 'processing', 0); // Parsing phase
+        if (onProgress) onProgress(fileIndex, 'processing', 0);
 
         const text = await file.text();
         const data = JSON.parse(text);
