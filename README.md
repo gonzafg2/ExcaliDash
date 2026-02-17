@@ -73,6 +73,28 @@ ExcaliDash includes an in-app update notifier that checks GitHub Releases. If yo
 UPDATE_CHECK_OUTBOUND=false
 ```
 
+## Docker Hub Upgrades
+
+If you deployed using `docker-compose.prod.yml` (Docker Hub images), upgrade by pulling the latest images and recreating containers:
+
+```bash
+docker compose -f docker-compose.prod.yml pull && \
+  docker compose -f docker-compose.prod.yml up -d
+```
+
+If you prefer a clean stop/start (more downtime, but simpler), you can do:
+
+```bash
+docker compose -f docker-compose.prod.yml down && \
+  docker compose -f docker-compose.prod.yml pull && \
+  docker compose -f docker-compose.prod.yml up -d
+```
+
+Notes:
+
+- Don’t add `-v` to `down` unless you intend to delete the persistent backend volume (your SQLite DB + secrets).
+- Only add `--remove-orphans` if you previously ran a different Compose file for the same project name and need to remove old/renamed services.
+
 # Installation
 
 > [!CAUTION]
