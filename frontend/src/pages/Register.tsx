@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { Check, Copy } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { Logo } from '../components/Logo';
 import * as api from '../api';
@@ -13,6 +14,7 @@ export const Register: React.FC = () => {
   const [setupCode, setSetupCode] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [copiedBootstrapCmd, setCopiedBootstrapCmd] = useState(false);
   const {
     register,
     authEnabled,
@@ -27,6 +29,31 @@ export const Register: React.FC = () => {
   const navigate = useNavigate();
 
   const passwordPolicy = getPasswordPolicy();
+
+  const bootstrapLogsCommand =
+    'docker compose -f docker-compose.prod.yml logs backend --tail=200 | grep "BOOTSTRAP SETUP"';
+
+  const copyBootstrapCommand = async () => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(bootstrapLogsCommand);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = bootstrapLogsCommand;
+        textarea.setAttribute('readonly', 'true');
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      }
+      setCopiedBootstrapCmd(true);
+      window.setTimeout(() => setCopiedBootstrapCmd(false), 1500);
+    } catch {
+      // ignore clipboard errors (e.g. insecure context)
+    }
+  };
 
   useEffect(() => {
     if (authLoading || authEnabled === null) return;
@@ -106,11 +133,31 @@ export const Register: React.FC = () => {
             )}
           </p>
           {bootstrapRequired && (
-            <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
-              Get the one-time setup code from backend logs. Expected prefix: <code>[BOOTSTRAP SETUP]</code>. For Docker:{" "}
-              <code>docker compose logs backend --tail=200 | grep &quot;BOOTSTRAP SETUP&quot;</code> (or{" "}
-              <code>docker logs excalidash-backend --tail=200 | grep &quot;BOOTSTRAP SETUP&quot;</code>).
-            </p>
+            <div className="mt-3 rounded-md bg-amber-50 dark:bg-amber-900/20 p-3 text-xs text-amber-900 dark:text-amber-200 text-left">
+              <div className="font-semibold">One-time setup code</div>
+              <div className="mt-1 text-amber-800 dark:text-amber-200/90">
+                Find it in the backend logs (look for <code>[BOOTSTRAP SETUP]</code>):
+              </div>
+              <div className="mt-2 rounded bg-amber-100 dark:bg-amber-900/30 p-2">
+                <div className="flex items-start gap-2">
+                  <pre className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[11px] leading-snug">
+                    <code className="select-all">{bootstrapLogsCommand}</code>
+                  </pre>
+                  <button
+                    type="button"
+                    onClick={() => void copyBootstrapCommand()}
+                    className="shrink-0 inline-flex h-7 w-7 items-center justify-center rounded border border-amber-200/80 dark:border-amber-700/60 bg-amber-50/60 dark:bg-amber-900/35 text-amber-900 dark:text-amber-100 hover:bg-amber-50 dark:hover:bg-amber-900/50"
+                    aria-label={copiedBootstrapCmd ? 'Copied docker command' : 'Copy docker command'}
+                    title={copiedBootstrapCmd ? 'Copied' : 'Copy'}
+                  >
+                    {copiedBootstrapCmd ? <Check size={14} /> : <Copy size={14} />}
+                  </button>
+                </div>
+              </div>
+              <div className="mt-2 text-amber-800 dark:text-amber-200/90">
+                If you are not using <code>docker-compose.prod.yml</code>, drop the <code>-f ...</code> flag.
+              </div>
+            </div>
           )}
         </div>
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
