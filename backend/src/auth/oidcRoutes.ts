@@ -215,6 +215,38 @@ export const registerOidcRoutes = (deps: RegisterOidcRoutesDeps) => {
 
   let oidcClientPromise: Promise<any> | null = null;
 
+  const selectTokenEndpointAuthMethod = (opts: {
+    hasClientSecret: boolean;
+    supported?: string[];
+  }): string => {
+    const supported = opts.supported?.filter(Boolean);
+
+    // Public clients authenticate at the token endpoint with "none".
+    if (!opts.hasClientSecret) {
+      const method = "none";
+      if (supported && supported.length > 0 && !supported.includes(method)) {
+        throw new Error(
+          `OIDC is configured without OIDC_CLIENT_SECRET (public client), but the provider does not advertise support for token endpoint auth method "${method}". ` +
+            `Fix: configure the client as public at your IdP (token endpoint auth = none), or set OIDC_CLIENT_SECRET for a confidential client.`
+        );
+      }
+      return method;
+    }
+
+    // Confidential clients most commonly use "client_secret_basic", but some providers only allow POST.
+    const preferred = ["client_secret_basic", "client_secret_post"];
+    for (const candidate of preferred) {
+      if (!supported || supported.length === 0 || supported.includes(candidate)) {
+        return candidate;
+      }
+    }
+
+    throw new Error(
+      `OIDC provider does not advertise support for client_secret-based token endpoint auth methods (tried: ${preferred.join(", ")}). ` +
+        `If your provider requires JWT-based client auth (private_key_jwt/client_secret_jwt), ExcaliDash currently does not expose configuration for that.`
+    );
+  };
+
   const getOidcClient = async () => {
     if (!config.oidc.issuerUrl || !config.oidc.clientId || !config.oidc.redirectUri) {
       throw new Error("OIDC is enabled but provider configuration is incomplete");
@@ -222,10 +254,19 @@ export const registerOidcRoutes = (deps: RegisterOidcRoutesDeps) => {
     if (!oidcClientPromise) {
       oidcClientPromise = (async () => {
         const issuer = await Issuer.discover(config.oidc.issuerUrl as string);
+        const supportedMethods = (issuer as any)?.metadata?.token_endpoint_auth_methods_supported as
+          | string[]
+          | undefined;
+        const tokenEndpointAuthMethod = selectTokenEndpointAuthMethod({
+          hasClientSecret: Boolean(config.oidc.clientSecret),
+          supported: supportedMethods,
+        });
+
         const clientConfig: Record<string, unknown> = {
           client_id: config.oidc.clientId as string,
           redirect_uris: [config.oidc.redirectUri as string],
           response_types: ["code"],
+          token_endpoint_auth_method: tokenEndpointAuthMethod,
         };
 
         // Allow public clients (no client_secret) for local dev / certain IdP setups.

@@ -7,8 +7,9 @@ services:
   # Keycloak Admin UI:
   #   http://localhost:8080/admin
   keycloak:
-    image: quay.io/keycloak/keycloak:latest
-    container_name: excalidash-keycloak
+    # Pin the default image for reproducible local dev.
+    # Override if needed: `export KEYCLOAK_IMAGE=quay.io/keycloak/keycloak:<version>`
+    image: ${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:24.0.5}
     command: ["start-dev", "--import-realm"]
     environment:
       - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
