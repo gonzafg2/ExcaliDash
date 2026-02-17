@@ -1,8 +1,7 @@
-# ExcaliDash v0.4.10-dev
+# ExcaliDash v0.4.11-dev
 
 Release date: 2026-02-17
 
 ## Highlights
 
-- fix csrf bypass for auth toggle, harden auth csrf checks, dedepulicate boostrap id usage
-- managed auth mode ui behavior (odic or hybrid require auth to be on)
+- break api when authentication mode is not selected on migration - i.e. force users to refresh from cached index.html
