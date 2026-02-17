@@ -83,6 +83,14 @@ http {
             try_files $uri $uri/ /index.html;
         }
 
+        # Never cache the HTML shell. Vite builds use hashed asset filenames, so caching
+        # index.html is the primary way users end up stuck on an old UI after upgrades.
+        location = /index.html {
+            add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0" always;
+            expires -1;
+            try_files /index.html =404;
+        }
+
         # Cache static assets
         location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
             expires 1y;

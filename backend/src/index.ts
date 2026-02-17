@@ -566,6 +566,71 @@ app.get("/health", (req, res) => {
 
 // Health check endpoint doesn't require auth
 
+// During upgrades, the browser may have an older frontend cached (index.html and JS bundles).
+// If auth onboarding is pending, block all app API routes so users are forced onto the
+// v0.4+ UI to complete "Choose Authentication Mode" before interacting with data.
+//
+// This is intentionally strict: it prevents users from continuing to use pre-auth UI
+// behavior while the instance is in an undefined onboarding state.
+if (config.authMode === "local") {
+  const ONBOARDING_GATE_TTL_MS = 5_000;
+  let onboardingGateCache:
+    | { required: boolean; fetchedAt: number }
+    | null = null;
+
+  const isOnboardingGateBypassPath = (reqPath: string): boolean => {
+    if (reqPath === "/health") return true;
+    if (reqPath === "/csrf-token") return true;
+    if (reqPath === "/auth") return true;
+    if (reqPath.startsWith("/auth/")) return true;
+    return false;
+  };
+
+  const isAuthOnboardingRequired = async (): Promise<boolean> => {
+    const now = Date.now();
+    if (onboardingGateCache && now - onboardingGateCache.fetchedAt < ONBOARDING_GATE_TTL_MS) {
+      return onboardingGateCache.required;
+    }
+
+    const systemConfig = await authModeService.ensureSystemConfig();
+    if (systemConfig.authEnabled || systemConfig.authOnboardingCompleted) {
+      onboardingGateCache = { required: false, fetchedAt: now };
+      return false;
+    }
+
+    const hasActiveUser = await prisma.user.findFirst({
+      where: { isActive: true },
+      select: { id: true },
+    });
+
+    const required = !hasActiveUser;
+    onboardingGateCache = { required, fetchedAt: now };
+    return required;
+  };
+
+  app.use(async (req, res, next) => {
+    try {
+      if (isOnboardingGateBypassPath(req.path)) return next();
+      const required = await isAuthOnboardingRequired();
+      if (!required) return next();
+
+      // Best-effort cache eviction to reduce "old UI keeps working" after upgrade.
+      res.setHeader("Clear-Site-Data", "\"cache\"");
+      return res.status(409).json({
+        error: "Authentication onboarding required",
+        code: "AUTH_ONBOARDING_REQUIRED",
+        message:
+          "Authentication onboarding is required before using the app. Refresh the page to load the latest UI and complete setup.",
+        redirectTo: "/auth-setup",
+      });
+    } catch (error) {
+      console.error("Auth onboarding gate error:", error);
+      // Fail open to avoid hard bricking the app if the gate check itself fails.
+      return next();
+    }
+  });
+}
+
 registerDashboardRoutes(app, {
   prisma,
   requireAuth,
