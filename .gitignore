@@ -11,6 +11,22 @@ backend/prisma/dev.db
 backend/prisma/e2e-test.db
 backend/prisma/*.backup
 
+# SQLite artifacts anywhere (avoid committing dev DBs)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.db.backup
+
+# Docker-entrypoint persisted secrets/locks (in case prisma volume is bind-mounted)
+backend/prisma/.jwt_secret
+backend/prisma/.csrf_secret
+backend/prisma/.migration-lock/
+
+# Local OIDC/Keycloak dev files
+docker-compose.oidc.local.yml
+ops/keycloak/realm-excalidash-local.json
+
 # Uploads
 backend/uploads/
 

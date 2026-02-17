@@ -15,13 +15,8 @@ import {
 
 const isSafeMulterTempFilename = (value: string): boolean => /^[a-f0-9]{32}$/.test(value);
 
-const isPathInsideDirectory = (candidatePath: string, rootDir: string): boolean => {
-  const relativePath = path.relative(rootDir, candidatePath);
-  return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
-};
-
 const resolveStagedUploadPath = async (
-  file: { filename?: unknown },
+  file: { filename?: unknown; path?: unknown },
   uploadRoot: string
 ): Promise<string> => {
   const absoluteUploadRoot = path.resolve(uploadRoot);
@@ -33,13 +28,20 @@ const resolveStagedUploadPath = async (
     throw new ImportValidationError("Invalid upload path");
   }
 
-  const filename = typeof file.filename === "string" ? file.filename : "";
-  if (!isSafeMulterTempFilename(filename)) {
+  // CodeQL path-injection: use basename extraction + strict allowlist, then enforce root containment.
+  // Multer typically generates a server-side random filename; we still validate defensively.
+  const rawPath = typeof file.path === "string" ? file.path : "";
+  const rawFilename = typeof file.filename === "string" ? file.filename : "";
+  const basename = path.basename(rawPath || rawFilename);
+  if (!isSafeMulterTempFilename(basename)) {
     throw new ImportValidationError("Invalid upload path");
   }
 
-  const candidatePath = path.resolve(canonicalUploadRoot, filename);
-  if (!isPathInsideDirectory(candidatePath, canonicalUploadRoot)) {
+  const candidatePath = path.resolve(canonicalUploadRoot, basename);
+  const rootPrefix = canonicalUploadRoot.endsWith(path.sep)
+    ? canonicalUploadRoot
+    : `${canonicalUploadRoot}${path.sep}`;
+  if (!candidatePath.startsWith(rootPrefix)) {
     throw new ImportValidationError("Invalid upload path");
   }
 
