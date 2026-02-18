@@ -316,18 +316,18 @@ export const Dashboard: React.FC = () => {
   };
 
   const executePermanentDelete = async (id: string) => {
-    setDrawings(prev => {
-      const next = prev.filter(d => d.id !== id);
-      if (next.length !== prev.length) {
-        setTotalCount(t => t - 1);
-      }
-      return next;
-    });
-    setSelectedIds(prev => { const s = new Set(prev); s.delete(id); return s; });
-    setDrawingToDelete(null); // Close modal immediately
-
+    // Close modal immediately, but only remove from the UI after the backend confirms deletion.
+    setDrawingToDelete(null);
     try {
       await api.deleteDrawing(id);
+      setDrawings(prev => {
+        const next = prev.filter(d => d.id !== id);
+        if (next.length !== prev.length) {
+          setTotalCount(t => t - 1);
+        }
+        return next;
+      });
+      setSelectedIds(prev => { const s = new Set(prev); s.delete(id); return s; });
     } catch (err) {
       console.error("Failed to delete drawing", err);
       refreshData();
@@ -394,16 +394,17 @@ export const Dashboard: React.FC = () => {
 
   const executeBulkPermanentDelete = async () => {
     const ids = Array.from(selectedIds);
-    setDrawings(prev => {
-      const next = prev.filter(d => !selectedIds.has(d.id));
-      setTotalCount(t => t - (prev.length - next.length));
-      return next;
-    });
-    setSelectedIds(new Set());
     setShowBulkDeleteConfirm(false);
 
     try {
       await Promise.all(ids.map(id => api.deleteDrawing(id)));
+      const toDelete = new Set(ids);
+      setDrawings(prev => {
+        const next = prev.filter(d => !toDelete.has(d.id));
+        setTotalCount(t => t - (prev.length - next.length));
+        return next;
+      });
+      setSelectedIds(new Set());
     } catch (err) {
       console.error("Failed bulk delete", err);
       refreshData();
