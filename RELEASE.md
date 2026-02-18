@@ -1,6 +1,6 @@
-# ExcaliDash v0.4.25-dev
+# ExcaliDash v0.4.26-dev
 
-Release date: 2026-02-17
+Release date: 2026-02-18
 
 ## Upgrading
 
@@ -27,9 +27,9 @@ Edit `docker-compose.prod.yml` and pin the release tags:
 ```yaml
 services:
   backend:
-    image: zimengxiong/excalidash-backend:v0.4.25-dev
+    image: zimengxiong/excalidash-backend:v0.4.26-dev
   frontend:
-    image: zimengxiong/excalidash-frontend:v0.4.25-dev
+    image: zimengxiong/excalidash-frontend:v0.4.26-dev
 ```
 
 Example:
@@ -40,4 +40,11 @@ docker compose -f docker-compose.prod.yml up -d
 
 </details>
 
-add sharing options between users, make sure ordering is transmitted in collaboration
+- Fixed live-collaboration permission enforcement: edit access changes now take effect promptly, preventing continued edits after access is
+  revoked.
+- Simplified “anyone with the link” sharing by removing the legacy share-token exchange flow and /share/:id; sharing now consistently uses
+  the public /shared/:id route.
+- Reduced data leakage in shared/public views by no longer exposing the owner’s collection/trash identifiers (collectionId is masked for
+  non-owners).
+- Improved UX and performance by avoiding background preview writes from the dashboard and by defaulting the editor to a safe non-owner
+  access state until loaded.
