@@ -31,6 +31,135 @@ interface Peer extends UserIdentity {
   isActive: boolean;
 }
 
+const preloadExcalidrawFonts = async (timeoutMs = 8000): Promise<void> => {
+  const normalizeBase = (value: unknown): string => {
+    const base = typeof value === "string" && value.length > 0 ? value : (import.meta.env.BASE_URL || "/");
+    const normalized = base.endsWith("/") ? base : `${base}/`;
+    return new URL(normalized, window.location.origin).toString();
+  };
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const withTimeout = async <T,>(p: Promise<T>, ms: number): Promise<T | null> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        p,
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), ms);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+
+  try {
+    const fonts = document.fonts;
+    if (!fonts || typeof fonts.check !== "function" || typeof fonts.add !== "function") return;
+
+    if (
+      fonts.check("16px Virgil") &&
+      fonts.check("16px Cascadia") &&
+      fonts.check("16px Assistant") &&
+      fonts.check("bold 16px Assistant")
+    ) {
+      return;
+    }
+
+    const assetBase = normalizeBase((window as any).EXCALIDRAW_ASSET_PATH);
+    const assetDir = import.meta.env.DEV ? "excalidraw-assets-dev" : "excalidraw-assets";
+
+    const ensureFontFaceFallback = () => {
+      const styleId = "excalidraw-font-face-fallback";
+      if (document.getElementById(styleId)) return;
+
+      const mkUrls = (file: string): string[] => {
+        const local = new URL(`${assetDir}/${file}`, assetBase).toString();
+        const localDist = new URL(`dist/${assetDir}/${file}`, assetBase).toString();
+        const unpkg = `https://unpkg.com/@excalidraw/excalidraw@0.17.6/dist/${assetDir}/${file}`;
+        return [local, localDist, unpkg];
+      };
+
+      const mkSrc = (urls: string[]) =>
+        urls
+          .filter((u, idx) => urls.indexOf(u) === idx)
+          .map((u) => `url("${u}") format("woff2")`)
+          .join(", ");
+
+      const style = document.createElement("style");
+      style.id = styleId;
+      style.textContent = [
+        `@font-face{font-family:"Virgil";src:${mkSrc(mkUrls("Virgil.woff2"))};font-display:swap;}`,
+        `@font-face{font-family:"Cascadia";src:${mkSrc(mkUrls("Cascadia.woff2"))};font-display:swap;}`,
+        `@font-face{font-family:"Assistant";src:${mkSrc(mkUrls("Assistant-Regular.woff2"))};font-display:swap;font-weight:400;}`,
+        `@font-face{font-family:"Assistant";src:${mkSrc(mkUrls("Assistant-Bold.woff2"))};font-display:swap;font-weight:700;}`,
+      ].join("");
+      document.head.appendChild(style);
+    };
+
+    ensureFontFaceFallback();
+
+    if (typeof fonts.load === "function") {
+      await withTimeout(
+        Promise.all([
+          fonts.load("16px Virgil"),
+          fonts.load("16px Cascadia"),
+          fonts.load("16px Assistant"),
+          fonts.load("bold 16px Assistant"),
+        ]),
+        timeoutMs,
+      );
+      if (fonts.check("16px Virgil")) return;
+    }
+
+    const tryLoadFontFace = async (
+      family: string,
+      file: string,
+      desc: { weight?: string; style?: string } = {},
+    ) => {
+      if (typeof (window as any).FontFace !== "function") return;
+      const checkStr = `${desc.weight ? `${desc.weight} ` : ""}16px ${family}`;
+      if (fonts.check(checkStr)) return;
+
+      const url = new URL(`${assetDir}/${file}`, assetBase).toString();
+      const face = new FontFace(family, `url(${url})`, {
+        weight: desc.weight,
+        style: desc.style,
+      });
+
+      const loaded = await withTimeout(face.load(), timeoutMs);
+      if (loaded) fonts.add(loaded);
+    };
+
+    await Promise.all([
+      tryLoadFontFace("Virgil", "Virgil.woff2", { weight: "400" }),
+      tryLoadFontFace("Cascadia", "Cascadia.woff2", { weight: "400" }),
+      tryLoadFontFace("Assistant", "Assistant-Regular.woff2", { weight: "400" }),
+      tryLoadFontFace("Assistant", "Assistant-Bold.woff2", { weight: "700" }),
+    ]);
+
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      if (fonts.check("16px Virgil")) return;
+      await sleep(50);
+    }
+
+    if (import.meta.env.DEV) {
+      console.warn("[Editor] Excalidraw fonts not ready", {
+        assetBase,
+        assetDir,
+        virgil: fonts.check("16px Virgil"),
+        cascadia: fonts.check("16px Cascadia"),
+        assistant: fonts.check("16px Assistant"),
+        assistantBold: fonts.check("bold 16px Assistant"),
+      });
+    }
+  } catch (err) {
+    if (import.meta.env.DEV) console.warn("[Editor] Excalidraw font preload failed", err);
+  }
+};
+
 const toFiniteNumber = (value: any): number => {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
   const n = Number(value);
@@ -1202,6 +1331,8 @@ export const Editor: React.FC = () => {
           collaborators: new Map(),
         };
         latestAppStateRef.current = hydratedAppState;
+
+        await preloadExcalidrawFonts();
 
         setInitialData({
           elements,
