@@ -1,21 +1,36 @@
 services:
+  db:
+    image: postgres:17-alpine
+    container_name: excalidash-db
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-excalidash}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-excalidash}
+      - POSTGRES_DB=${POSTGRES_DB:-excalidash}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - excalidash-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-excalidash}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: excalidash-backend
     environment:
-      - DATABASE_URL=file:/app/prisma/dev.db
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-excalidash}:${POSTGRES_PASSWORD:-excalidash}@db:5432/${POSTGRES_DB:-excalidash}
       - PORT=8000
       - NODE_ENV=production
       - AUTH_MODE=${AUTH_MODE:-local}
-      # Keep disabled by default; only enable when a trusted proxy sanitizes forwarded headers.
-      - TRUST_PROXY=false
-      # Optional for single-instance deployments:
-      # if unset, backend auto-generates and persists one in the volume.
-      # Recommended to set explicitly for portability and multi-instance setups.
+      - TRUST_PROXY=${TRUST_PROXY:-false}
       - JWT_SECRET=${JWT_SECRET}
       - CSRF_SECRET=${CSRF_SECRET}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:${FRONTEND_PORT:-6767}}
       # Optional OIDC settings (required for AUTH_MODE=hybrid or oidc_enforced)
       # - OIDC_PROVIDER_NAME=Authentik
       # - OIDC_ISSUER_URL=https://auth.example.com/application/o/excalidash/
@@ -23,7 +38,10 @@ services:
       # - OIDC_CLIENT_SECRET=your-client-secret
       # - OIDC_REDIRECT_URI=https://excalidash.example.com/api/auth/oidc/callback
     volumes:
-      - backend-data:/app/prisma
+      - uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
     networks:
       - excalidash-network
     restart: unless-stopped
@@ -45,13 +63,12 @@ services:
       dockerfile: frontend/Dockerfile
     container_name: excalidash-frontend
     ports:
-      - "6767:80"
+      - "${FRONTEND_PORT:-6767}:80"
     environment:
-      # Backend URL for nginx proxy (host:port format, no protocol)
-      # Override for reverse proxy setups (e.g., excalidash-backend.svc.cluster.local:8000)
       - BACKEND_URL=backend:8000
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     networks:
       - excalidash-network
     restart: unless-stopped
@@ -74,4 +91,5 @@ networks:
     driver: bridge
 
 volumes:
-  backend-data:
+  pgdata:
+  uploads:
