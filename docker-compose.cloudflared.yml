@@ -14,7 +14,7 @@ services:
       - TUNNEL_TOKEN=${TUNNEL_TOKEN}
     depends_on:
       frontend:
-        condition: service_healthy
+        condition: service_started
     networks:
       - excalidash-network
     restart: unless-stopped
