@@ -11,6 +11,8 @@ services:
     networks:
       - excalidash-network
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: "1.0"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-excalidash}"]
       interval: 10s
@@ -23,9 +25,10 @@ services:
       dockerfile: Dockerfile
     container_name: excalidash-backend
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-excalidash}:${POSTGRES_PASSWORD:-excalidash}@db:5432/${POSTGRES_DB:-excalidash}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-excalidash}:${POSTGRES_PASSWORD:-excalidash}@db:5432/${POSTGRES_DB:-excalidash}?connection_limit=10
       - PORT=8000
       - NODE_ENV=production
+      - UPDATE_CHECK_OUTBOUND=false
       - AUTH_MODE=${AUTH_MODE:-local}
       - TRUST_PROXY=${TRUST_PROXY:-false}
       - JWT_SECRET=${JWT_SECRET}
@@ -45,6 +48,8 @@ services:
     networks:
       - excalidash-network
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: "1.0"
     healthcheck:
       test:
         [
@@ -72,6 +77,8 @@ services:
     networks:
       - excalidash-network
     restart: unless-stopped
+    mem_limit: 128m
+    cpus: "0.5"
     healthcheck:
       test:
         [
@@ -80,7 +87,7 @@ services:
           "--quiet",
           "--tries=1",
           "--spider",
-          "http://localhost:80",
+          "http://127.0.0.1:80",
         ]
       interval: 30s
       timeout: 10s
