@@ -317,7 +317,7 @@ export const config: Config = {
     "ENABLE_REFRESH_TOKEN_ROTATION",
     true,
   ),
-  enableAuditLogging: getOptionalBoolean("ENABLE_AUDIT_LOGGING", false),
+  enableAuditLogging: getOptionalBoolean("ENABLE_AUDIT_LOGGING", true),
   enforceHttpsRedirect: getOptionalBoolean("ENFORCE_HTTPS_REDIRECT", true),
   bootstrapSetupCodeTtlMs: getRequiredEnvNumber(
     "BOOTSTRAP_SETUP_CODE_TTL_MS",

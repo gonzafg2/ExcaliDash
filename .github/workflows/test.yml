@@ -7,6 +7,34 @@ on:
     branches: [main]
 
 jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Lint frontend
+        run: cd frontend && npm ci && npm run lint
+
+      - name: Lint backend
+        run: cd backend && npm ci && npm run lint
+
+      - name: Audit dependencies
+        run: |
+          cd frontend && npm audit --audit-level=high --omit=dev || true
+          cd ../backend && npm audit --audit-level=high --omit=dev || true
+
+      - name: Type-check backend
+        run: cd backend && npx prisma generate && npx tsc --noEmit
+
+      - name: Type-check frontend
+        run: cd frontend && npx tsc -b --noEmit
+
   backend-tests:
     name: Backend Tests
     runs-on: ubuntu-latest
