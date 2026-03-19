@@ -85,12 +85,17 @@ const parseFrontendUrl = (raw: string | undefined): string | undefined => {
 
 const resolveDatabaseUrl = (rawUrl?: string) => {
   const backendRoot = path.resolve(__dirname, "../");
-  const defaultDbPath = path.resolve(backendRoot, "prisma/dev.db");
 
   if (!rawUrl || rawUrl.trim().length === 0) {
-    return `file:${defaultDbPath}`;
+    return "postgresql://excalidash:excalidash@localhost:5432/excalidash";
   }
 
+  // PostgreSQL URLs pass through unchanged
+  if (rawUrl.startsWith("postgresql://") || rawUrl.startsWith("postgres://")) {
+    return rawUrl;
+  }
+
+  // Legacy SQLite file: URL support (for import features)
   if (!rawUrl.startsWith("file:")) {
     return rawUrl;
   }
