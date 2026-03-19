@@ -76,6 +76,7 @@ model Drawing {
 
   @@index([userId, updatedAt])
   @@index([userId, collectionId, updatedAt])
+  @@index([userId, name])
 }
 
 model DrawingPermission {
