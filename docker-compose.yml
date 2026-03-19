@@ -4,7 +4,7 @@ services:
     container_name: excalidash-db
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-excalidash}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-excalidash}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       - POSTGRES_DB=${POSTGRES_DB:-excalidash}
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -25,7 +25,7 @@ services:
       dockerfile: Dockerfile
     container_name: excalidash-backend
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-excalidash}:${POSTGRES_PASSWORD:-excalidash}@db:5432/${POSTGRES_DB:-excalidash}?connection_limit=10
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-excalidash}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-excalidash}?connection_limit=10
       - PORT=8000
       - NODE_ENV=production
       - UPDATE_CHECK_OUTBOUND=false
