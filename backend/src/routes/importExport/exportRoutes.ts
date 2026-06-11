@@ -116,8 +116,7 @@ export const registerExcalidashExportRoute = (deps: RegisterImportExportDeps) =>
     const abortArchive = () => {
       try {
         archive.abort();
-      } catch {
-      }
+      } catch { /* intentionally ignored */ }
     };
 
     res.on("close", () => {

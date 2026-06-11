@@ -88,6 +88,7 @@ export const Settings: React.FC = () => {
             try {
                 window.localStorage?.setItem?.(`${UPDATE_INFO_KEY}:${channel}`, JSON.stringify(info));
             } catch {
+              /* intentionally ignored */
             }
         } catch (err: unknown) {
             let message = 'Failed to check for updates';
@@ -376,6 +377,7 @@ export const Settings: React.FC = () => {
                                     try {
                                         window.localStorage?.setItem?.(UPDATE_CHANNEL_KEY, next);
                                     } catch {
+                                      /* intentionally ignored */
                                     }
                                     setUpdateChannel(next);
                                     void checkForUpdates(next);

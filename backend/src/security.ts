@@ -234,6 +234,7 @@ export const sanitizeText = (
 ): string => {
   if (typeof input !== "string") return "";
 
+  // eslint-disable-next-line no-control-regex
   const cleaned = input.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
   const truncated = cleaned.slice(0, maxLength);
 
@@ -545,7 +546,7 @@ export const sanitizeDrawingData = (data: {
     };
   } catch (error) {
     console.error("Data sanitization failed:", error);
-    throw new Error("Invalid or malicious drawing data detected");
+    throw new Error("Invalid or malicious drawing data detected", { cause: error });
   }
 };
 

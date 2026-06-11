@@ -14,7 +14,6 @@ import {
   cleanupTestDb,
   initTestDb,
   setupTestDb,
-  createTestDrawingPayload,
   createSampleFilesObject,
   generateLargeImageDataUrl,
   compareFilesObjects,

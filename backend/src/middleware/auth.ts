@@ -7,6 +7,7 @@ import { createAuthModeService, type AuthModeService } from "../auth/authMode";
 import { ACCESS_TOKEN_COOKIE_NAME, readCookie } from "../auth/cookies";
 
 declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
       user?: {

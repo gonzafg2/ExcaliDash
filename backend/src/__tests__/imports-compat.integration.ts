@@ -18,11 +18,11 @@ const createTempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), "excalidash-le
 
 const openWritableDb = (filePath: string): any => {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+     
     const { DatabaseSync } = require("node:sqlite") as any;
     return new DatabaseSync(filePath, { enableForeignKeyConstraints: false });
   } catch (_err) {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+     
     const Database = require("better-sqlite3") as any;
     return new Database(filePath);
   }
