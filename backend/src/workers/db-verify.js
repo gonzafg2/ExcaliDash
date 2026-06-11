@@ -25,6 +25,6 @@ try {
   
   db.close();
   parentPort.postMessage(result.integrity_check === "ok");
-} catch (error) {
+} catch (_error) {
   parentPort.postMessage(false);
 }

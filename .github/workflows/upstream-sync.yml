@@ -1,0 +1,65 @@
+name: Upstream Sync Check
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Monday 9am UTC
+  workflow_dispatch:       # Manual trigger
+
+jobs:
+  sync-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/ZimengXiong/ExcaliDash.git || true
+          git fetch upstream main
+
+      - name: Check for new commits
+        id: check
+        run: |
+          BEHIND=$(git rev-list --count HEAD..upstream/main)
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+          if [ "$BEHIND" -gt 0 ]; then
+            COMMITS=$(git log --oneline HEAD..upstream/main | head -20)
+            echo "commits<<EOF" >> "$GITHUB_OUTPUT"
+            echo "$COMMITS" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create sync PR
+        if: steps.check.outputs.behind > 0
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BEHIND_COUNT: ${{ steps.check.outputs.behind }}
+          UPSTREAM_COMMITS: ${{ steps.check.outputs.commits }}
+        run: |
+          BRANCH="sync/upstream-$(date +%Y%m%d)"
+          git checkout -b "$BRANCH"
+          git merge upstream/main --no-edit || true
+          git push origin "$BRANCH"
+
+          BODY=$(cat <<PREOF
+          ## Upstream Sync
+
+          **Commits behind**: ${BEHIND_COUNT}
+
+          ### New upstream commits:
+          \`\`\`
+          ${UPSTREAM_COMMITS}
+          \`\`\`
+
+          ### Conflict zones esperadas
+          Ver [UPSTREAM-SYNC.md](docs/UPSTREAM-SYNC.md) para guía de resolución.
+
+          > Este PR fue creado automáticamente. Requiere merge manual por conflictos SQLite→PostgreSQL.
+          PREOF
+          )
+
+          gh pr create \
+            --title "sync: upstream changes (${BEHIND_COUNT} commits)" \
+            --body "$BODY" \
+            --label "upstream-sync"

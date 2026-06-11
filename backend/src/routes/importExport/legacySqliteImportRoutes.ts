@@ -139,7 +139,7 @@ export const registerLegacySqliteImportRoutes = (deps: RegisterImportExportDeps)
       } finally {
         try {
           db?.close?.();
-        } catch {}
+        } catch { /* intentionally ignored */ }
       }
     } finally {
       await removeFileIfExists(stagedPath);
@@ -405,7 +405,7 @@ export const registerLegacySqliteImportRoutes = (deps: RegisterImportExportDeps)
       } finally {
         try {
           legacyDb?.close?.();
-        } catch {}
+        } catch { /* intentionally ignored */ }
       }
     } finally {
       await removeFileIfExists(stagedPath);

@@ -8,14 +8,16 @@ services:
       - DATABASE_URL=file:/app/prisma/dev.db
       - PORT=8000
       - NODE_ENV=production
+      - UPDATE_CHECK_OUTBOUND=false
       - AUTH_MODE=${AUTH_MODE:-local}
       # Keep disabled by default; only enable when a trusted proxy sanitizes forwarded headers.
-      - TRUST_PROXY=false
+      - TRUST_PROXY=${TRUST_PROXY:-false}
       # Optional for single-instance deployments:
       # if unset, backend auto-generates and persists one in the volume.
       # Recommended to set explicitly for portability and multi-instance setups.
       - JWT_SECRET=${JWT_SECRET}
       - CSRF_SECRET=${CSRF_SECRET}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:${FRONTEND_PORT:-6767}}
       # # Local OIDC settings for dev compose.
       # - OIDC_PROVIDER_NAME=Keycloak
       # # Browser-facing issuer URL.
@@ -31,17 +33,22 @@ services:
       # - OIDC_ADMIN_GROUPS=admins
     volumes:
       - backend-data:/app/prisma
+      - uploads:/app/uploads
     networks:
       - excalidash-network
     restart: unless-stopped
+    mem_limit: 256m
+    cpus: "1.0"
     healthcheck:
-      # Use IPv4 loopback explicitly to avoid IPv6 localhost resolution issues.
+      # IPv4 loopback avoids IPv6 localhost resolution issues; the
+      # x-forwarded-proto header keeps the check working when the backend
+      # enforces HTTPS redirects behind the Cloudflare tunnel.
       test:
         [
           "CMD",
           "node",
           "-e",
-          "require('http').get('http://127.0.0.1:8000/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))",
+          "require('http').get({hostname:'127.0.0.1',port:8000,path:'/health',headers:{'x-forwarded-proto':'https'}}, (r) => process.exit(r.statusCode === 200 ? 0 : 1))",
         ]
       interval: 30s
       timeout: 10s
@@ -53,16 +60,19 @@ services:
       dockerfile: frontend/Dockerfile
     container_name: excalidash-frontend
     ports:
-      - "6767:80"
+      - "${FRONTEND_PORT:-6767}:80"
     environment:
       # Backend URL for nginx proxy (host:port format, no protocol)
       # Override for reverse proxy setups (e.g., excalidash-backend.svc.cluster.local:8000)
       - BACKEND_URL=backend:8000
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     networks:
       - excalidash-network
     restart: unless-stopped
+    mem_limit: 128m
+    cpus: "0.5"
     healthcheck:
       # Use IPv4 loopback explicitly to avoid IPv6 localhost resolution issues.
       test:
@@ -78,9 +88,23 @@ services:
       timeout: 10s
       retries: 3
 
+  cloudflared:
+    image: cloudflare/cloudflared:2025.2.1
+    container_name: excalidash-cloudflared
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN:?Set TUNNEL_TOKEN in .env}
+    depends_on:
+      - frontend
+    networks:
+      - excalidash-network
+    restart: unless-stopped
+    mem_limit: 128m
+
 networks:
   excalidash-network:
     driver: bridge
 
 volumes:
   backend-data:
+  uploads:

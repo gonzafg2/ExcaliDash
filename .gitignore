@@ -32,6 +32,7 @@ backend/uploads/
 
 # Generated files
 backend/src/generated/
+backend/openapi.json
 
 # Environment variables
 .env

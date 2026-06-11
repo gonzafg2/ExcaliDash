@@ -5,13 +5,12 @@
  * when ExcaliDash is behind multiple proxy layers (e.g., Traefik, Synology NAS)
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import express from "express";
 import request from "supertest";
 import {
   createCsrfToken,
   validateCsrfToken,
-  getCsrfTokenHeader,
 } from "../security";
 
 const getClientIdFromRequest = (req: express.Request): string => {

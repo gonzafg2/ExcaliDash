@@ -75,6 +75,7 @@ export const ImpersonationBanner: React.FC = () => {
             clearLocalImpersonation();
           }
         } catch {
+          /* intentionally ignored */
         }
       };
 

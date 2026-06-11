@@ -21,7 +21,7 @@ const resolveStagedUploadPath = async (
 ): Promise<string> => {
   const absoluteUploadRoot = path.resolve(uploadRoot);
 
-  let canonicalUploadRoot = absoluteUploadRoot;
+  let canonicalUploadRoot: string;
   try {
     canonicalUploadRoot = await fsPromises.realpath(absoluteUploadRoot);
   } catch {

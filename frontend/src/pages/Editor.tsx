@@ -1793,6 +1793,7 @@ export const Editor: React.FC = () => {
                 try {
                   window.localStorage.setItem(autoHideStorageKey, next ? "1" : "0");
                 } catch {
+                  /* intentionally ignored */
                 }
               }
             }}

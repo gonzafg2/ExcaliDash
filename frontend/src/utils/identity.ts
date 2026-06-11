@@ -187,6 +187,7 @@ export const getUserIdentity = (): UserIdentity => {
         return normalized;
       }
     } catch {
+      /* intentionally ignored */
     }
   }
 

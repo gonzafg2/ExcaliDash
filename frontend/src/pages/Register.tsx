@@ -55,6 +55,7 @@ export const Register: React.FC = () => {
       setCopiedBootstrapCmd(true);
       window.setTimeout(() => setCopiedBootstrapCmd(false), 1500);
     } catch {
+      /* intentionally ignored */
     }
   };
 

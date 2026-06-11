@@ -1,7 +1,7 @@
 .PHONY: help install dev build test test-frontend test-backend test-e2e test-e2e-docker \
         lint lint-frontend lint-backend clean docker-build docker-run docker-down docker-logs \
         release pre-release version-bump changelog changelog-open changelog-keep db-migrate db-reset \
-        db-verify-backup health-check
+        db-verify-backup health-check api-docs
 
 DOCKER_USERNAME := zimengxiong
 IMAGE_NAME := excalidash
@@ -26,7 +26,7 @@ help: ## Show this help message
 	@echo "Database:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | grep -E '(db-)' | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
 	@echo "Ops:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | grep -E '(health-check)' | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | grep -E '(health-check|api-docs)' | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
 	@echo "Current version: $(VERSION)"
 
 install: ## Install all dependencies (frontend, backend, e2e)
@@ -114,8 +114,9 @@ lint-frontend: ## Run frontend linter
 	@echo "Linting frontend..."
 	cd frontend && npm run lint
 
-lint-backend: ## Run backend linter (if available)
-	@echo "Backend linting not configured"
+lint-backend: ## Run backend linter
+	@echo "Linting backend..."
+	cd backend && npm run lint
 
 clean: ## Clean build artifacts and node_modules
 	@echo "Cleaning build artifacts..."
@@ -510,6 +511,10 @@ db-verify-backup: ## Verify the latest backup is restorable
 
 health-check: ## Run a one-shot health check
 	@./scripts/health-check.sh
+
+api-docs: ## Generate OpenAPI spec
+	@cd backend && npm run openapi
+	@echo "OpenAPI spec generated at backend/openapi.json"
 
 up: docker-run ## Alias: Start Docker containers
 down: docker-down ## Alias: Stop Docker containers

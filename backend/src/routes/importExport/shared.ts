@@ -111,7 +111,7 @@ export const getSafeZipEntry = (zip: JSZip, filePath: string) => {
 export const sanitizePathSegment = (input: string, fallback: string): string => {
   const value = typeof input === "string" ? input.trim() : "";
   const cleaned = value
-    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_") // eslint-disable-line no-control-regex
     .replace(/\s+/g, " ")
     .slice(0, 120)
     .trim();
@@ -201,8 +201,7 @@ export const resolveSafeUploadedFilePath = async (
   uploadRoot: string
 ): Promise<string> => {
   const absoluteUploadRoot = path.resolve(uploadRoot);
-  let canonicalUploadRoot = absoluteUploadRoot;
-
+  let canonicalUploadRoot: string;
   try {
     canonicalUploadRoot = await fsPromises.realpath(absoluteUploadRoot);
   } catch {
@@ -224,14 +223,14 @@ export const resolveSafeUploadedFilePath = async (
 
 export const openReadonlySqliteDb = (filePath: string): any => {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+     
     const { DatabaseSync } = require("node:sqlite") as any;
     return new DatabaseSync(filePath, {
       readOnly: true,
       enableForeignKeyConstraints: false,
     });
   } catch {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+     
     const Database = require("better-sqlite3") as any;
     return new Database(filePath, { readonly: true, fileMustExist: true });
   }
