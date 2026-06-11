@@ -79,13 +79,14 @@ function buildApp() {
     respondWithValidationErrors: vi.fn(),
     ensureTrashCollection: vi.fn(),
     invalidateDrawingsCache: vi.fn(),
+    invalidateDrawingsCacheForUser: vi.fn(),
     buildDrawingsCacheKey: vi.fn(),
     getCachedDrawingsBody: vi.fn().mockReturnValue(null),
     cacheDrawingsResponse: vi.fn(),
     MAX_PAGE_SIZE: 100,
     config: { nodeEnv: "test", enableAuditLogging: false },
     logAuditEvent: vi.fn(),
-  });
+  } as any);
 
   return { app, prisma };
 }

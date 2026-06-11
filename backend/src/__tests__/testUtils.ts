@@ -26,7 +26,7 @@ const withDbPushLock = (fn: () => void) => {
       const err = error as NodeJS.ErrnoException;
       if (err.code !== "EEXIST") throw error;
       if (Date.now() - start > 30_000) {
-        throw new Error("Timed out waiting for Prisma db push lock");
+        throw new Error("Timed out waiting for Prisma db push lock", { cause: error });
       }
       sleepSync(50);
     }
@@ -37,12 +37,10 @@ const withDbPushLock = (fn: () => void) => {
   } finally {
     try {
       fs.closeSync(fd);
-    } catch {
-    }
+    } catch { /* intentionally ignored */ }
     try {
       fs.unlinkSync(DB_PUSH_LOCK_PATH);
-    } catch {
-    }
+    } catch { /* intentionally ignored */ }
   }
 };
 

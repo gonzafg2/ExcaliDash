@@ -487,6 +487,7 @@ export const registerDrawingRoutes = (
     }
 
     const versionConflictError = new Error("VERSION_CONFLICT");
+    // eslint-disable-next-line no-useless-assignment -- TS needs the initializer to prove assignment across try/catch
     let updatedDrawing: typeof existingDrawing | null = null;
 
     try {
@@ -984,7 +985,7 @@ export const registerDrawingRoutes = (
       },
     });
 
-    invalidateDrawingsCache();
+    invalidateDrawingsCacheForUser(drawing.userId);
 
     return res.json({
       ...updated,
